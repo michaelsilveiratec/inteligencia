@@ -1,6 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
+  connectStudentDrive,
+  installStudentDriveApi,
+  setStudentDriveProfile
+} from "./student-drive-api.js";
+import {
   Award,
   BarChart3,
   Bell,
@@ -34,6 +39,8 @@ import {
   Zap
 } from "lucide-react";
 import "./styles.css";
+
+installStudentDriveApi();
 
 const navItems = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -73,29 +80,6 @@ function safeStorageRemove(key) {
   }
 }
 
-if (typeof window !== "undefined" && !window.__preparaFetchWrapped) {
-  const nativeFetch = window.fetch.bind(window);
-  window.fetch = (input, init = {}) => {
-    const url = typeof input === "string" ? input : input?.url || "";
-    if (!url.startsWith("/api/")) return nativeFetch(input, init);
-
-    const storedUser = safeStorageGet("prepara:user", "default");
-    const profileRaw = safeStorageGet("prepara:userProfile", "");
-    let fromProfile = "";
-    try {
-      const parsed = profileRaw ? JSON.parse(profileRaw) : null;
-      fromProfile = parsed?.googleSub || parsed?.email || parsed?.name || "";
-    } catch {
-      fromProfile = "";
-    }
-    const userId = String(fromProfile || storedUser || "default").trim();
-    const headers = new Headers(init.headers || {});
-    if (!headers.get("x-user-id")) headers.set("x-user-id", userId);
-    return nativeFetch(input, { ...init, headers });
-  };
-  window.__preparaFetchWrapped = true;
-}
-
 function App() {
   const [userProfile, setUserProfile] = useState(() => getStoredProfile());
   const [user, setUser] = useState(() => {
@@ -119,7 +103,17 @@ function App() {
   }))), [subjects]);
 
   useEffect(() => {
-    if (user) refresh();
+    if (!user) return undefined;
+    let canceled = false;
+    const profile = getStoredProfile();
+    setStudentDriveProfile(profile, import.meta.env.VITE_GOOGLE_CLIENT_ID);
+    connectStudentDrive(profile, import.meta.env.VITE_GOOGLE_CLIENT_ID, false)
+      .finally(() => {
+        if (!canceled) refresh();
+      });
+    return () => {
+      canceled = true;
+    };
   }, [user]);
 
   async function refresh(showNotice = false) {
@@ -153,14 +147,19 @@ function App() {
     setNotice({ message, type, id: Date.now() });
   }
 
-  function handleLogin(payload) {
+  async function handleLogin(payload) {
     const profile = normalizeLoginPayload(payload);
     if (!profile.name) return;
     const identityKey = profile.googleSub || profile.email || profile.name;
     safeStorageSet("prepara:user", identityKey);
     safeStorageSet("prepara:userProfile", JSON.stringify(profile));
+    setStudentDriveProfile(profile, import.meta.env.VITE_GOOGLE_CLIENT_ID);
     setUser(profile.name);
     setUserProfile(profile);
+    if (profile.provider === "google") {
+      const status = await connectStudentDrive(profile, import.meta.env.VITE_GOOGLE_CLIENT_ID, true);
+      notify(status.connected ? "Dados conectados ao Google Drive do aluno." : status.message, status.connected ? "success" : "warning");
+    }
   }
 
   function handleLogout() {

@@ -29,6 +29,7 @@ O fluxo normal e:
 - Relatorios de desempenho e temas em risco.
 - Sistema de progresso com XP, nivel, conquistas e ranking pessoal.
 - Correcao local e, quando configurado, correcao com IA.
+- Dados do aluno salvos no Google Drive App Data da propria conta Google, quando o login Google autoriza o Drive.
 
 ## Tecnologias usadas
 
@@ -95,6 +96,14 @@ http://127.0.0.1:3333
 ```
 
 Em desenvolvimento, a entrada principal e `http://127.0.0.1:5173`. Depois do build de producao, o Express serve o sistema em `http://localhost:3333`.
+
+Para salvar os dados no Drive do proprio aluno, tambem ative a **Google Drive API** no Google Cloud e adicione este escopo no OAuth Consent Screen:
+
+```text
+https://www.googleapis.com/auth/drive.appdata
+```
+
+O sistema cria um arquivo privado chamado `prepara-prova-ia-data.json` na area App Data do Drive do aluno. Esse arquivo nao aparece nos arquivos comuns do Drive e pertence a conta Google do proprio aluno.
 
 ## Como ligar no terminal
 
@@ -177,7 +186,11 @@ npm run reset:data
 
 ## Onde os dados ficam salvos
 
-O banco SQLite e criado automaticamente em:
+Quando o aluno entra com Google e autoriza o Drive, materias, conteudos, desafios, simulados e progresso ficam no **Google Drive App Data do proprio aluno**.
+
+Se o aluno entra manualmente sem Google, ou se o Drive nao for autorizado, o sistema usa o armazenamento local do navegador como fallback.
+
+O backend local ainda possui SQLite para testes e execucao fora do modo Drive. O banco SQLite e criado automaticamente em:
 
 ```text
 server/data/estudos.db

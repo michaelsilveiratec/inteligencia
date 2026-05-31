@@ -9,7 +9,7 @@ import { generateProfessorQuestions, generateProfessorFeedback } from "./gemini-
 
 const app = express();
 const port = process.env.PORT || 3333;
-const uploadDir = path.resolve("server", "uploads");
+const uploadDir = process.env.UPLOAD_DIR || path.resolve("server", "uploads");
 const distDir = path.resolve("dist");
 fs.mkdirSync(uploadDir, { recursive: true });
 loadLocalEnv();
@@ -840,9 +840,13 @@ if (fs.existsSync(distDir)) {
   });
 }
 
-app.listen(port, () => {
-  console.log(`Prepara Prova IA em http://localhost:${port}`);
-});
+if (process.env.VERCEL !== "1") {
+  app.listen(port, () => {
+    console.log(`Prepara Prova IA em http://localhost:${port}`);
+  });
+}
+
+export default app;
 
 function joinedTopics(userId) {
   return db.prepare(`
