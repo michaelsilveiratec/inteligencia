@@ -1,0 +1,36 @@
+{
+  "name": "ciclo-inteligente-estudos",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently \"npm run dev:api\" \"npm run dev:web\"",
+    "dev:api": "node --watch server/index.js",
+    "dev:web": "vite --host 127.0.0.1",
+    "build": "vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "start": "node server/index.js",
+    "test": "node server/smoke-test.js",
+    "test:ui": "npm run build && node server/ui-test.js",
+    "reset:data": "node server/reset-data.js"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.24.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "axios": "^1.16.1",
+    "better-sqlite3": "^11.7.0",
+    "concurrently": "^9.1.2",
+    "cors": "^2.8.5",
+    "dotenv": "^17.4.2",
+    "express": "^4.21.2",
+    "lucide-react": "^0.468.0",
+    "multer": "^2.1.1",
+    "pdf-parse": "^1.1.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "vite": "^6.0.3"
+  },
+  "devDependencies": {
+    "puppeteer-core": "^24.31.0"
+  }
+}
