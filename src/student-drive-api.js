@@ -347,12 +347,13 @@ async function handleQuizSubmit(topicId, init) {
   const found = findTopic(store, topicId);
   if (!found) return jsonResponse({ error: "Tema não encontrado." }, 404);
   const body = await readBody(init);
-  const question = (found.topic.questions || generateQuestions(found.topic.title, found.topic.summary))[0];
+  const questions = found.topic.questions?.length ? found.topic.questions : generateQuestions(found.topic.title, found.topic.summary);
+  const question = questions[Number(body.question_index || 0)] || questions[0];
   const evaluation = evaluateAnswer({ ...found.topic, reference_answer: question.answer, prompt: question.question }, body.answer || "");
   found.topic.total_answers = (found.topic.total_answers || 0) + 1;
   found.topic.correct_answers = (found.topic.correct_answers || 0) + (evaluation.correct ? 1 : 0);
   await saveStore(store);
-  return jsonResponse({ topic_id: topicId, topic_title: found.topic.title, question: question.question, ...evaluation });
+  return jsonResponse({ topic_id: topicId, topic_title: found.topic.title, question: question.question, correct_answer: question.answer, ...evaluation });
 }
 
 async function handleChallengeQuizAnswer(challengeId, init) {
@@ -646,19 +647,27 @@ function joinedChallenges(store) {
 }
 
 function buildQuizPlan(topics) {
-  return topics.filter((topic) => Array.isArray(topic.questions) && topic.questions.length > 0).slice(0, 4).map((topic) => {
-    const question = topic.questions[0] || generateQuestions(topic.title, topic.summary)[0];
-    const options = makeMultipleChoiceOptions(question.answer, topic.title);
-    return {
-      id: topic.id,
-      title: topic.title,
-      subject_name: topic.subject_name,
-      question: question.question,
-      hint: topic.notes || topic.summary || "Responda com suas palavras.",
-      options: options.map((option, index) => ({ id: index, label: String.fromCharCode(65 + index), text: option.text })),
-      status: topic.status
-    };
-  });
+  const items = [];
+  for (const topic of topics.filter((item) => Array.isArray(item.questions) && item.questions.length > 0)) {
+    for (const [questionIndex, question] of topic.questions.entries()) {
+      const options = makeMultipleChoiceOptions(question.answer, topic.title);
+      items.push({
+        id: `${topic.id}-${questionIndex}`,
+        topic_id: topic.id,
+        question_index: questionIndex,
+        title: topic.title,
+        subject_name: topic.subject_name,
+        question: question.question,
+        hint: topic.notes || topic.summary || "Responda com suas palavras.",
+        correct_answer: question.answer,
+        correct_index: 0,
+        options: options.map((option, index) => ({ id: index, label: String.fromCharCode(65 + index), text: option.text })),
+        status: topic.status
+      });
+      if (items.length >= 7) return items;
+    }
+  }
+  return items;
 }
 
 function buildExam(store, count) {

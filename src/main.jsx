@@ -777,24 +777,40 @@ function ContentsView({ subjects, notify, refresh, goTo }) {
 }
 
 function QuizView({ quizItems, notify, refresh }) {
-  const [selectedTopicId, setSelectedTopicId] = useState(null);
+  const roundItems = useMemo(() => quizItems.slice(0, 7), [quizItems]);
+  const [currentIndex, setCurrentIndex] = useState(0);
   const [selectedOptionId, setSelectedOptionId] = useState(null);
   const [result, setResult] = useState(null);
+  const [answers, setAnswers] = useState({});
   const [submitting, setSubmitting] = useState(false);
+  const [startedAt, setStartedAt] = useState(() => Date.now());
+  const [elapsed, setElapsed] = useState(0);
+  const [party, setParty] = useState(null);
+  const [darkMode, setDarkMode] = useState(false);
 
-  const selectedTopic = quizItems.find((item) => item.id === selectedTopicId) || quizItems[0] || null;
+  const currentItem = roundItems[currentIndex] || null;
+  const answeredItems = Object.values(answers);
+  const correctCount = answeredItems.filter((item) => item.correct).length;
+  const accuracy = answeredItems.length ? Math.round((correctCount / answeredItems.length) * 100) : 0;
+  const progress = roundItems.length ? Math.round(((currentIndex + (result ? 1 : 0)) / roundItems.length) * 100) : 0;
 
   useEffect(() => {
-    if (!selectedTopicId && quizItems.length > 0) {
-      setSelectedTopicId(quizItems[0].id);
-      setSelectedOptionId(null);
-      setResult(null);
-    }
-  }, [quizItems, selectedTopicId]);
+    setCurrentIndex(0);
+    setSelectedOptionId(null);
+    setResult(null);
+    setAnswers({});
+    setStartedAt(Date.now());
+    setElapsed(0);
+  }, [roundItems.length]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setElapsed(Math.floor((Date.now() - startedAt) / 1000)), 1000);
+    return () => window.clearInterval(timer);
+  }, [startedAt]);
 
   async function submitQuiz(event) {
     event.preventDefault();
-    if (!selectedTopic) return;
+    if (!currentItem) return;
     if (selectedOptionId === null) {
       notify("Selecione uma alternativa antes de enviar.", "error");
       return;
@@ -802,15 +818,15 @@ function QuizView({ quizItems, notify, refresh }) {
     setSubmitting(true);
     setResult(null);
     try {
-      const selectedOption = selectedTopic.options.find((option) => option.id === selectedOptionId);
+      const selectedOption = currentItem.options.find((option) => option.id === selectedOptionId);
       if (!selectedOption) {
         notify("Alternativa inválida.", "error");
         return;
       }
-      const response = await fetch(`/api/quiz/${selectedTopic.id}/submit`, {
+      const response = await fetch(`/api/quiz/${currentItem.topic_id || currentItem.id}/submit`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ answer: selectedOption.text })
+        body: JSON.stringify({ answer: selectedOption.text, question_index: currentItem.question_index || 0 })
       });
       const data = await response.json();
       if (!response.ok) {
@@ -818,7 +834,17 @@ function QuizView({ quizItems, notify, refresh }) {
         return;
       }
       setResult(data);
-      setSelectedOptionId(null);
+      setAnswers((current) => ({
+        ...current,
+        [currentItem.id]: { correct: data.correct, selectedOptionId, score: data.score || 0 }
+      }));
+      playQuizSound(Boolean(data.correct), correctCount);
+      setParty({
+        correct: Boolean(data.correct),
+        title: data.correct ? "Muito bem!" : "Quase lá!",
+        message: data.correct ? "Resposta registrada. Continue nesse ritmo." : "Resposta registrada. Veja a explicação e siga para a próxima."
+      });
+      window.setTimeout(() => setParty(null), 1200);
       notify(data.correct ? "Correto! Sua revisão foi registrada." : "Resposta incorreta. Reveja e tente novamente.", data.correct ? "success" : "warning");
       await refresh();
     } catch (error) {
@@ -828,69 +854,245 @@ function QuizView({ quizItems, notify, refresh }) {
     }
   }
 
-  if (quizItems.length === 0) {
-    return <EmptyAction title="Sem quiz disponível" text="Adicione temas e perguntas para revisar o que você escreveu." />;
+  function goToQuestion(index) {
+    if (index < 0 || index >= roundItems.length) return;
+    setCurrentIndex(index);
+    setSelectedOptionId(answers[roundItems[index]?.id]?.selectedOptionId ?? null);
+    setResult(null);
+  }
+
+  function nextQuestion() {
+    if (currentIndex + 1 >= roundItems.length) return;
+    goToQuestion(currentIndex + 1);
+  }
+
+  function restartQuiz() {
+    setCurrentIndex(0);
+    setSelectedOptionId(null);
+    setResult(null);
+    setAnswers({});
+    setStartedAt(Date.now());
+    setElapsed(0);
+  }
+
+  if (roundItems.length === 0) {
+    return <EmptyAction title="Sem quiz disponível" text="Adicione conteúdos com perguntas para o sistema montar o quiz." />;
   }
 
   return (
-    <section className="screenStack">
-      <article className="panel">
-        <PanelTitle title="Quiz de Revisão" action="Responda para reforçar" />
-        <div className="quizLayout">
-          <div className="quizTopics">
-            {quizItems.map((item) => (
+    <section className={darkMode ? "intQuizShell dark" : "intQuizShell"}>
+      {party && (
+        <div className="intQuizPartyOverlay">
+          <div className="intQuizConfetti" aria-hidden="true">
+            {Array.from({ length: party.correct ? 18 : 8 }).map((_, index) => (
+              <span key={index} style={{ left: `${5 + index * 5}%`, animationDelay: `${index * 20}ms` }} />
+            ))}
+          </div>
+          <div className="intQuizPartyCard">
+            <h3>{party.title}</h3>
+            <p>{party.message}</p>
+          </div>
+        </div>
+      )}
+
+      <header className="intQuizHeader">
+        <div className="intQuizTitle">
+          <div className="intQuizLogo"><Brain size={24} /></div>
+          <div>
+            <h3>Quiz Inteligente</h3>
+            <p>Questões adaptadas ao que você cadastrou no sistema</p>
+          </div>
+        </div>
+        <div className="intQuizMetrics">
+          <article>
+            <span><CheckCircle2 size={14} /> Acertos</span>
+            <strong>{accuracy}%</strong>
+          </article>
+          <article>
+            <span><Flame size={14} /> Sequência</span>
+            <strong>{correctCount}/{roundItems.length}</strong>
+          </article>
+          <article>
+            <span><CalendarClock size={14} /> Tempo</span>
+            <strong>{formatQuizDuration(elapsed)}</strong>
+          </article>
+        </div>
+        <div className="intQuizHeaderActions">
+          <button className="intQuizToggle" type="button" onClick={() => setDarkMode((value) => !value)}>
+            {darkMode ? "Modo claro" : "Modo escuro"}
+          </button>
+        </div>
+      </header>
+
+      <div className="intQuizProgressWrap">
+        <div className="intQuizProgressBar"><div style={{ width: `${progress}%` }} /></div>
+        <div className="intQuizNavRow">
+          <div className="intQuizNavList">
+            {roundItems.map((item, index) => (
               <button
                 key={item.id}
                 type="button"
-                className={selectedTopic?.id === item.id ? "active quizTopicButton" : "quizTopicButton"}
-                onClick={() => setSelectedTopicId(item.id)}
+                className={`intQuizDot ${index === currentIndex ? "active" : ""} ${answers[item.id] ? "answered" : ""}`}
+                onClick={() => goToQuestion(index)}
               >
-                <strong>{item.title}</strong>
-                <span>{item.subject_name || "Sem matéria"}</span>
+                {index + 1}
               </button>
             ))}
           </div>
-          <form className="quizForm" onSubmit={submitQuiz}>
-            <PanelTitle title={selectedTopic.title} action={selectedTopic.subject_name || "Tema"} />
-            <div className="quizQuestion">
-              <p>{selectedTopic.question}</p>
-              {selectedTopic.hint && <small>{selectedTopic.hint}</small>}
-            </div>
-            <Field label="Alternativas">
-              <div className="quizOptions">
-                {selectedTopic.options.map((option) => (
-                  <button
-                    key={option.id}
-                    type="button"
-                    className={`quizOption ${selectedOptionId === option.id ? "selected" : ""}`}
-                    onClick={() => setSelectedOptionId(option.id)}
-                  >
-                    <span>{option.label}</span>
-                    <p>{option.text}</p>
-                  </button>
-                ))}
-              </div>
-            </Field>
-            <div className="buttonRow">
-              <button className="primaryButton fit" type="submit" disabled={submitting}>
-                <CheckCircle2 size={18} />Enviar resposta
-              </button>
-              <button className="secondaryButton fit" type="button" onClick={() => setSelectedOptionId(null)}>
-                Limpar
-              </button>
-            </div>
-            {result && (
-              <div className={`quizResult ${result.correct ? "success" : "error"}`}>
-                <strong>{result.correct ? "Acerto!" : "Continue tentando"}</strong>
-                <p>{result.feedback || (result.correct ? "Boa resposta!" : "Veja a explicação e tente novamente.")}</p>
-                {result.score !== undefined && <small>Pontuação: {result.score}%</small>}
-              </div>
-            )}
-          </form>
+          <strong>Questão {currentIndex + 1} de {roundItems.length}</strong>
         </div>
-      </article>
+      </div>
+
+      <form className="intQuizMain" onSubmit={submitQuiz}>
+        <article className="intQuizQuestionArea">
+          <h2>{currentItem.question}</h2>
+          <p>{currentItem.subject_name || "Sem matéria"} · {currentItem.title}</p>
+          <div className="intQuizOptions">
+            {currentItem.options.map((option) => {
+              const isSelected = selectedOptionId === option.id;
+              const isCorrect = result && option.id === (currentItem.correct_index ?? 0);
+              const isWrong = result && isSelected && !result.correct;
+              return (
+                <button
+                  key={option.id}
+                  type="button"
+                  className={`intQuizOption ${isSelected ? "selected" : ""} ${isCorrect ? "correct" : ""} ${isWrong ? "wrong" : ""}`}
+                  onClick={() => !result && setSelectedOptionId(option.id)}
+                  disabled={Boolean(result)}
+                >
+                  <span>{option.label}</span>
+                  <p>{option.text}</p>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="intQuizActions">
+            <button className="primaryButton fit" type="submit" disabled={submitting || Boolean(result)}>
+              <CheckCircle2 size={18} /> Enviar resposta
+            </button>
+            <button className="secondaryButton fit" type="button" onClick={nextQuestion} disabled={currentIndex + 1 >= roundItems.length}>
+              <Play size={18} /> Pular questão
+            </button>
+            {result && currentIndex + 1 < roundItems.length && (
+              <button className="secondaryButton fit" type="button" onClick={nextQuestion}>
+                Próxima pergunta
+              </button>
+            )}
+          </div>
+
+          {result && (
+            <div className={result.correct ? "quizResult success" : "quizResult error"}>
+              <strong>{result.correct ? "Acerto!" : "Continue tentando"}</strong>
+              <p>{result.feedback || (result.correct ? "Boa resposta!" : "Veja a explicação e tente novamente.")}</p>
+              {result.correct_answer && <small>Resposta esperada: {result.correct_answer}</small>}
+              {result.score !== undefined && <small>Pontuação: {result.score}%</small>}
+            </div>
+          )}
+        </article>
+
+        <aside className="intQuizSide">
+          <div className="intQuizBox">
+            <h4><Sparkles size={16} /> Dica</h4>
+            <p>{currentItem.hint || "Pense nos conceitos cadastrados nesse conteúdo."}</p>
+          </div>
+          <div className="intQuizBox">
+            <h4>Nível</h4>
+            <p>{currentItem.status || "Revisão"}</p>
+          </div>
+          <div className="intQuizBox">
+            <h4>Resposta após enviar</h4>
+            <ul>
+              <li>Você verá se acertou</li>
+              <li>Receberá explicação</li>
+              <li>Ouvirá um som de feedback</li>
+            </ul>
+          </div>
+        </aside>
+      </form>
+
+      <div className="intQuizBottom">
+        <article className="intQuizBottomCard">
+          <h5>Seu desempenho no ciclo</h5>
+          <div className="intQuizRing" style={{ "--value": `${accuracy}%` }}>{accuracy}%</div>
+          <p>{accuracy >= 70 ? "Muito bom! Você está evoluindo consistentemente." : "Continue praticando para elevar seu desempenho."}</p>
+        </article>
+        <article className="intQuizBottomCard">
+          <h5>Últimos temas</h5>
+          <div className="intQuizThemeList">
+            {roundItems.slice(0, 3).map((item) => (
+              <div className="intQuizThemeRow" key={item.id}>
+                <span>{item.title}</span>
+                <b className={answers[item.id]?.correct ? "good" : answers[item.id] ? "bad" : "warn"}>
+                  {answers[item.id] ? (answers[item.id].correct ? "OK" : "Rever") : "Pendente"}
+                </b>
+              </div>
+            ))}
+          </div>
+        </article>
+        <article className="intQuizBottomCard">
+          <h5>Revisão inteligente</h5>
+          <p>Máximo de 7 perguntas por rodada. Se existir apenas 1 pergunta cadastrada, o quiz mostra apenas 1.</p>
+          <button className="primaryButton fit" type="button" onClick={restartQuiz}>Reiniciar rodada</button>
+        </article>
+      </div>
+
+      <footer className="intQuizFooterNote">
+        <strong>Quanto mais você alimenta o sistema, mais inteligentes ficam as próximas questões.</strong>
+      </footer>
     </section>
   );
+}
+
+function playQuizSound(correct, streak = 0) {
+  if (typeof window === "undefined") return;
+  const AudioContext = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContext) return;
+  const context = new AudioContext();
+  const now = context.currentTime;
+
+  if (correct) {
+    const chords = [
+      [523.25, 659.25, 783.99],
+      [587.33, 739.99, 880],
+      [659.25, 783.99, 987.77]
+    ];
+    const chord = chords[streak % chords.length];
+    chord.forEach((frequency, index) => {
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+      oscillator.type = "sine";
+      oscillator.frequency.value = frequency;
+      gain.gain.setValueAtTime(0.0001, now + index * 0.04);
+      gain.gain.exponentialRampToValueAtTime(0.16, now + index * 0.04 + 0.03);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.55 + index * 0.03);
+      oscillator.connect(gain).connect(context.destination);
+      oscillator.start(now + index * 0.04);
+      oscillator.stop(now + 0.7);
+    });
+    window.setTimeout(() => context.close(), 900);
+    return;
+  }
+
+  [220, 165, 110].forEach((frequency, index) => {
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    oscillator.type = "triangle";
+    oscillator.frequency.value = frequency;
+    gain.gain.setValueAtTime(0.0001, now + index * 0.12);
+    gain.gain.exponentialRampToValueAtTime(0.18, now + index * 0.12 + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + index * 0.12 + 0.18);
+    oscillator.connect(gain).connect(context.destination);
+    oscillator.start(now + index * 0.12);
+    oscillator.stop(now + index * 0.12 + 0.22);
+  });
+  window.setTimeout(() => context.close(), 700);
+}
+
+function formatQuizDuration(seconds) {
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(rest).padStart(2, "0")}`;
 }
 
 function ChallengesView({ challenges, notify, refresh }) {

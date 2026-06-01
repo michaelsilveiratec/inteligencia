@@ -336,7 +336,11 @@ app.post("/api/quiz/:topicId/submit", async (req, res) => {
   const answer = String(req.body.answer || "").trim();
   if (!answer) return res.status(400).json({ error: "Digite sua resposta antes de enviar." });
 
-  const question = buildSingleQuestion(topic, topic.title, topic.summary)[0];
+  const questionIndex = numberInRange(req.body.question_index, 0, 100, 0);
+  const availableQuestions = Array.isArray(topic.questions) && topic.questions.length > 0
+    ? topic.questions
+    : buildSingleQuestion(topic, topic.title, topic.summary);
+  const question = availableQuestions[questionIndex] || availableQuestions[0] || buildSingleQuestion(topic, topic.title, topic.summary)[0];
   const fakeChallenge = {
     prompt: question.question,
     questions: topic.questions,
@@ -376,6 +380,7 @@ app.post("/api/quiz/:topicId/submit", async (req, res) => {
     topic_id: topic.id,
     topic_title: topic.title,
     question: question.question,
+    correct_answer: question.answer,
     correct: evaluation.correct,
     score: evaluation.score,
     feedback: evaluation.feedback,
@@ -1468,26 +1473,35 @@ function makeMultipleChoiceOptions(correctAnswer, topicTitle, summary) {
 
 function buildQuizPlan(topics) {
   const sorted = uniqueTopics(topics.slice().sort((a, b) => urgencyScore(b) - urgencyScore(a)));
-  return sorted
-    .filter((topic) => Array.isArray(topic.questions) && topic.questions.length > 0)
-    .slice(0, 4)
-    .map((topic) => {
-      const question = buildSingleQuestion(topic, topic.title, topic.summary)[0];
+  const items = [];
+  for (const topic of sorted) {
+    const questions = Array.isArray(topic.questions) && topic.questions.length > 0
+      ? topic.questions
+      : [];
+    for (const [questionIndex, question] of questions.entries()) {
       const options = makeMultipleChoiceOptions(question.answer, topic.title, topic.summary);
-      return {
-        id: topic.id,
+      const correctIndex = options.findIndex((option) => normalize(option.text) === normalize(question.answer));
+      items.push({
+        id: `${topic.id}-${questionIndex}`,
+        topic_id: topic.id,
+        question_index: questionIndex,
         title: topic.title,
         subject_name: topic.subject_name,
         question: question.question,
         hint: topic.notes || topic.summary || "Responda com suas palavras e exemplos.",
+        correct_answer: question.answer,
+        correct_index: correctIndex >= 0 ? correctIndex : 0,
         options: options.map((option, index) => ({
           id: index,
           label: String.fromCharCode(65 + index),
           text: option.text
         })),
         status: topic.status
-      };
-    });
+      });
+      if (items.length >= 7) return items;
+    }
+  }
+  return items;
 }
 
 function uniqueTopics(topics) {
