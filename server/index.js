@@ -6,6 +6,7 @@ import path from "node:path";
 import pdfParse from "pdf-parse/lib/pdf-parse.js";
 import { db, generateQuestions, nextDate } from "./database.js";
 import { generateProfessorQuestions, generateProfessorFeedback } from "./gemini-professor.js";
+import { ensureSoftwareQuizSeed } from "./software-quiz-seed.js";
 
 const app = express();
 const port = process.env.PORT || 3333;
@@ -23,6 +24,7 @@ app.use(cors());
 app.use(express.json({ limit: "2mb" }));
 app.use("/uploads", express.static(uploadDir));
 
+ensureSoftwareQuizSeed(db);
 ensureSingleChallengeForExistingTopics();
 markPassingChallengesAsCompleted();
 
