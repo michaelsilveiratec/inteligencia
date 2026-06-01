@@ -116,7 +116,7 @@ try {
   await expectText(page, "Finalizar simulado");
   await clickButton(page, "Finalizar simulado");
   await expectText(page, "Simulado finalizado");
-  await expectText(page, "Relatórios");
+  await expectText(page, "Dashboard");
 
   await page.click('button[title="Atualizar"]');
   await expectText(page, "Dados atualizados");

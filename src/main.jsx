@@ -7,7 +7,6 @@ import {
 } from "./student-drive-api.js";
 import {
   Award,
-  BarChart3,
   Bell,
   BookOpen,
   Brain,
@@ -22,13 +21,11 @@ import {
   Link as LinkIcon,
   ListChecks,
   LogOut,
-  Medal,
   Play,
   Plus,
   RefreshCcw,
   Save,
   Search,
-  ShieldCheck,
   Sparkles,
   Star,
   Target,
@@ -50,9 +47,7 @@ const navItems = [
   { id: "challenges", label: "Desafios", icon: Star },
   { id: "exam", label: "Simulados", icon: ClipboardList },
   { id: "predictions", label: "Previsão de Prova", icon: Target },
-  { id: "reports", label: "Relatórios", icon: BarChart3 },
-  { id: "achievements", label: "Conquistas", icon: Trophy },
-  { id: "ranking", label: "Ranking", icon: Medal }
+  { id: "achievements", label: "Conquistas", icon: Trophy }
 ];
 
 function safeStorageGet(key, fallback = "") {
@@ -92,7 +87,6 @@ function App() {
   const [quizItems, setQuizItems] = useState([]);
   const [predictions, setPredictions] = useState([]);
   const [challenges, setChallenges] = useState([]);
-  const [report, setReport] = useState(null);
   const [notice, setNotice] = useState(null);
   const [loading, setLoading] = useState(false);
 
@@ -119,22 +113,20 @@ function App() {
   async function refresh(showNotice = false) {
     try {
       setLoading(true);
-      const [dashboardRes, subjectsRes, quizRes, predictionsRes, challengesRes, reportRes] = await Promise.all([
+      const [dashboardRes, subjectsRes, quizRes, predictionsRes, challengesRes] = await Promise.all([
         fetch("/api/dashboard"),
         fetch("/api/subjects"),
         fetch("/api/quiz"),
         fetch("/api/predictions"),
-        fetch("/api/challenges"),
-        fetch("/api/report")
+        fetch("/api/challenges")
       ]);
-      const responses = [dashboardRes, subjectsRes, quizRes, predictionsRes, challengesRes, reportRes];
+      const responses = [dashboardRes, subjectsRes, quizRes, predictionsRes, challengesRes];
       if (responses.some((response) => !response.ok)) throw new Error("Não foi possível carregar o sistema.");
       setDashboard(await dashboardRes.json());
       setSubjects(await subjectsRes.json());
       setQuizItems(await quizRes.json());
       setPredictions(await predictionsRes.json());
       setChallenges(await challengesRes.json());
-      setReport(await reportRes.json());
       if (showNotice) notify("Dados atualizados.");
     } catch (error) {
       notify(error.message || "Erro ao carregar dados.", "error");
@@ -206,9 +198,7 @@ function App() {
         {active === "challenges" && <ChallengesView challenges={challenges} notify={notify} refresh={refresh} />}
         {active === "exam" && <ExamView topics={topics} notify={notify} refresh={refresh} goTo={setActive} />}
         {active === "predictions" && <PredictionsView predictions={predictions} refresh={refresh} notify={notify} />}
-        {active === "reports" && <ReportsView report={report} dashboard={dashboard} topics={topics} />}
         {active === "achievements" && <AchievementsView dashboard={dashboard} />}
-        {active === "ranking" && <RankingView dashboard={dashboard} user={user} />}
       </main>
     </div>
   );
@@ -352,7 +342,7 @@ function Sidebar({ user, userProfile, active, setActive, onLogout, dashboard }) 
         })}
       </nav>
 
-      <button className="profileBox" type="button" onClick={() => setActive("ranking")}>
+      <button className="profileBox" type="button" onClick={() => setActive("dashboard")}>
         <div className="avatar">{user.slice(0, 1).toUpperCase()}</div>
         <div>
           <strong>{user}</strong>
@@ -524,7 +514,7 @@ function Dashboard({ dashboard, quizItems, predictions, challenges, topics, goTo
         </section>
 
         <section className="panel performancePanel">
-          <PanelTitle title="Desempenho Geral" action="Ver relatório" onAction={() => goTo("reports")} />
+          <PanelTitle title="Desempenho Geral" />
           <div className="performanceBody">
             <div className="donut" style={{ "--value": `${dashboard?.accuracy || 0}%` }}>
               <strong>{dashboard?.accuracy || 0}%</strong>
@@ -1271,7 +1261,7 @@ function ExamView({ topics, notify, refresh, goTo }) {
     }
     notify("Simulado finalizado. Revisões atualizadas.");
     await refresh();
-    goTo("reports");
+    goTo("dashboard");
   }
 
   if (topics.length === 0) return <EmptyAction title="Sem questões" text="Cadastre conteúdos para montar simulados inteligentes." />;
@@ -1412,32 +1402,6 @@ function PredictionsView({ predictions, refresh, notify }) {
   );
 }
 
-function ReportsView({ report, dashboard, topics }) {
-  return (
-    <section className="screenStack">
-      <div className="metricGrid">
-        <Metric icon={CalendarClock} label="Tempo estudado" value={formatHours(report?.totalMinutes || 0)} hint="total registrado" tone="purple" />
-        <Metric icon={Target} label="Aproveitamento" value={`${report?.accuracy || dashboard?.accuracy || 0}%`} hint="geral" tone="green" />
-        <Metric icon={ShieldCheck} label="Dominados" value={report?.dominated || 0} hint="temas" tone="blue" />
-        <Metric icon={Flame} label="Em risco" value={dashboard?.risk || 0} hint="prioridade" tone="orange" />
-      </div>
-      <section className="panel">
-        <PanelTitle title="Matérias e temas em risco" />
-        <div className="topicMap">
-          {topics.map((topic) => (
-            <article className="topicTile" key={topic.id}>
-              <span>{topic.subjectName}</span>
-              <strong>{topic.title}</strong>
-              <p>{topic.summary || "Sem resumo."}</p>
-              <div className="tileFooter"><StatusPill status={topic.status} /><b>{topic.probability}%</b></div>
-            </article>
-          ))}
-        </div>
-      </section>
-    </section>
-  );
-}
-
 function AchievementsView({ dashboard }) {
   return (
     <section className="panel">
@@ -1445,23 +1409,6 @@ function AchievementsView({ dashboard }) {
       <div className="badgeGrid large">
         {(dashboard?.achievements || []).map((item) => <BadgeCard item={item} key={item.title} />)}
       </div>
-    </section>
-  );
-}
-
-function RankingView({ dashboard, user }) {
-  return (
-    <section className="panel rankingPanel">
-      <PanelTitle title="Ranking Pessoal" />
-      <div className="rankHero">
-        <div className="avatar large">{user.slice(0, 1).toUpperCase()}</div>
-        <div>
-          <h3>{user}</h3>
-          <p>Nível {dashboard?.level || 1} · XP {dashboard?.xp || 0}</p>
-        </div>
-        <strong>#{dashboard?.ranking || 1}</strong>
-      </div>
-      <p className="officialPhrase">“Não basta estudar. É preciso compreender, escrever, praticar e evoluir. O Prepara Prova IA transforma conhecimento em aprovação.”</p>
     </section>
   );
 }
