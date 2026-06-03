@@ -25,7 +25,6 @@ import {
   Save,
   Sparkles,
   Trophy,
-  Trash2,
   Upload,
   UserRound,
   X
@@ -232,18 +231,6 @@ function App() {
     }
   }
 
-  async function deleteSubject(subject) {
-    const confirmed = window.confirm(`Excluir "${subject.nome}" e todas as questoes dessa materia?`);
-    if (!confirmed) return;
-    try {
-      await apiDelete(`/api/subjects/${subject.id}`);
-      showNotice("Materia excluida.");
-      await refreshAll();
-    } catch (error) {
-      showNotice(error.message || "Nao foi possivel excluir.");
-    }
-  }
-
   const currentQuestion = quiz?.questions?.[questionIndex] || null;
   const answeredCount = quiz?.questions?.filter((question) => answers[question.id]).length || 0;
 
@@ -263,7 +250,6 @@ function App() {
             loading={loading}
             onStartQuiz={startQuiz}
             onEditSubject={setEditingSubject}
-            onDeleteSubject={deleteSubject}
           />
         )}
         {active === "simulation" && (
@@ -415,7 +401,7 @@ function StudentGate({ onSubmit }) {
   );
 }
 
-function HomeScreen({ subjects, history, loading, onStartQuiz, onEditSubject, onDeleteSubject }) {
+function HomeScreen({ subjects, history, loading, onStartQuiz, onEditSubject }) {
   const lastAttempt = history[0];
 
   return (
@@ -441,7 +427,6 @@ function HomeScreen({ subjects, history, loading, onStartQuiz, onEditSubject, on
               key={subject.id}
               onStartQuiz={onStartQuiz}
               onEditSubject={onEditSubject}
-              onDeleteSubject={onDeleteSubject}
             />
           ))}
           {!loading && subjects.length === 0 && (
@@ -507,7 +492,7 @@ function SimulationScreen({ status, onStart, onRefresh }) {
   );
 }
 
-function SubjectCard({ subject, onStartQuiz, onEditSubject, onDeleteSubject }) {
+function SubjectCard({ subject, onStartQuiz, onEditSubject }) {
   const Icon = iconMap[subject.icone] || BookOpen;
 
   return (
@@ -515,9 +500,6 @@ function SubjectCard({ subject, onStartQuiz, onEditSubject, onDeleteSubject }) {
       <div className="subjectActions">
         <button type="button" onClick={() => onEditSubject(subject)} title="Editar materia">
           <Edit3 size={16} />
-        </button>
-        <button type="button" onClick={() => onDeleteSubject(subject)} title="Excluir materia">
-          <Trash2 size={16} />
         </button>
       </div>
       <button className="subjectOpenButton" type="button" onClick={() => onStartQuiz(subject)}>
@@ -787,11 +769,22 @@ function ProfileScreen({ profile, studentName, onChangeStudent }) {
 }
 
 function AdminScreen({ subjects, onSaved }) {
+  const [adminPassword, setAdminPassword] = useState("");
+  const [unlocked, setUnlocked] = useState(false);
   const [form, setForm] = useState(emptyQuestionForm);
   const [saving, setSaving] = useState(false);
   const [restoring, setRestoring] = useState(false);
 
   const subjectNames = useMemo(() => [...new Set(subjects.map((item) => item.nome))], [subjects]);
+
+  function unlockAdmin(event) {
+    event.preventDefault();
+    if (!adminPassword.trim()) {
+      onSaved("Informe a senha de administrador.");
+      return;
+    }
+    setUnlocked(true);
+  }
 
   function updateAlternative(index, value) {
     setForm((current) => {
@@ -805,7 +798,7 @@ function AdminScreen({ subjects, onSaved }) {
     event.preventDefault();
     setSaving(true);
     try {
-      await apiPost("/api/admin/questions", form);
+      await apiPost("/api/admin/questions", form, { adminPassword });
       setForm(emptyQuestionForm);
       await onSaved("Questao cadastrada. Se for uma nova materia, ela ja aparece no inicio.");
     } catch (error) {
@@ -845,10 +838,10 @@ function AdminScreen({ subjects, onSaved }) {
       if (backup?.tables) {
         const confirmed = window.confirm("Restaurar este backup vai substituir os dados atuais. Continuar?");
         if (!confirmed) return;
-        await apiPost("/api/backup/restore", backup);
+        await apiPost("/api/backup/restore", backup, { adminPassword });
         await onSaved("Backup restaurado.");
       } else {
-        const result = await apiPost("/api/admin/questions/import", backup);
+        const result = await apiPost("/api/admin/questions/import", backup, { adminPassword });
         await onSaved(`${result.imported} questoes importadas.`);
       }
     } catch (error) {
@@ -867,13 +860,40 @@ function AdminScreen({ subjects, onSaved }) {
     try {
       const text = await file.text();
       const payload = parseJsonFile(text);
-      const result = await apiPost("/api/admin/simulation/import", payload);
+      const result = await apiPost("/api/admin/simulation/import", payload, { adminPassword });
       await onSaved(`${result.imported} questoes importadas para o simulado.`);
     } catch (error) {
       await onSaved(error.message || "Nao foi possivel importar o simulado.");
     } finally {
       setRestoring(false);
     }
+  }
+
+  if (!unlocked) {
+    return (
+      <section className="panelScreen">
+        <HeaderBlock
+          title="Area administrativa"
+          subtitle="Somente o administrador pode cadastrar, importar ou restaurar dados."
+        />
+        <form className="adminLock" onSubmit={unlockAdmin}>
+          <label>
+            <span>Senha do administrador</span>
+            <input
+              type="password"
+              value={adminPassword}
+              onChange={(event) => setAdminPassword(event.target.value)}
+              placeholder="Digite a senha"
+              autoComplete="current-password"
+              required
+            />
+          </label>
+          <button className="primaryButton" type="submit">
+            Entrar
+          </button>
+        </form>
+      </section>
+    );
   }
 
   return (
@@ -979,10 +999,13 @@ async function apiGet(path) {
   return apiRequest(path);
 }
 
-async function apiPost(path, payload) {
+async function apiPost(path, payload, options = {}) {
   return apiRequest(path, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...(options.adminPassword ? { "x-admin-password": options.adminPassword } : {})
+    },
     body: JSON.stringify(payload)
   });
 }

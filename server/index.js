@@ -1,5 +1,6 @@
 import cors from "cors";
 import express from "express";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { createDataStore } from "./database.js";
@@ -30,9 +31,9 @@ app.patch("/api/subjects/:id", asyncRoute(async (req, res) => {
   res.json(await store.updateSubject(req.params.id, req.body));
 }));
 
-app.delete("/api/subjects/:id", asyncRoute(async (req, res) => {
-  res.json(await store.deleteSubject(req.params.id));
-}));
+app.delete("/api/subjects/:id", (_req, res) => {
+  res.status(403).json({ error: "Exclusoes foram bloqueadas neste sistema." });
+});
 
 app.get("/api/subjects/:id/quiz", asyncRoute(async (req, res) => {
   res.json(await store.getQuiz(req.params.id));
@@ -74,19 +75,19 @@ app.get("/api/backup", asyncRoute(async (_req, res) => {
   res.json(await store.getBackup());
 }));
 
-app.post("/api/backup/restore", asyncRoute(async (req, res) => {
+app.post("/api/backup/restore", requireAdmin, asyncRoute(async (req, res) => {
   res.json(await store.restoreBackup(req.body));
 }));
 
-app.post("/api/admin/questions/import", asyncRoute(async (req, res) => {
+app.post("/api/admin/questions/import", requireAdmin, asyncRoute(async (req, res) => {
   res.status(201).json(await store.importQuestions(req.body));
 }));
 
-app.post("/api/admin/simulation/import", asyncRoute(async (req, res) => {
+app.post("/api/admin/simulation/import", requireAdmin, asyncRoute(async (req, res) => {
   res.status(201).json(await store.importSimulationQuestions(req.body));
 }));
 
-app.post("/api/admin/questions", asyncRoute(async (req, res) => {
+app.post("/api/admin/questions", requireAdmin, asyncRoute(async (req, res) => {
   res.status(201).json(await store.createQuestion(req.body));
 }));
 
@@ -103,9 +104,9 @@ if (process.env.VERCEL) {
     res.json(await store.updateSubject(req.params.id, req.body));
   }));
 
-  app.delete("/subjects/:id", asyncRoute(async (req, res) => {
-    res.json(await store.deleteSubject(req.params.id));
-  }));
+  app.delete("/subjects/:id", (_req, res) => {
+    res.status(403).json({ error: "Exclusoes foram bloqueadas neste sistema." });
+  });
 
   app.get("/subjects/:id/quiz", asyncRoute(async (req, res) => {
     res.json(await store.getQuiz(req.params.id));
@@ -147,19 +148,19 @@ if (process.env.VERCEL) {
     res.json(await store.getBackup());
   }));
 
-  app.post("/backup/restore", asyncRoute(async (req, res) => {
+  app.post("/backup/restore", requireAdmin, asyncRoute(async (req, res) => {
     res.json(await store.restoreBackup(req.body));
   }));
 
-  app.post("/admin/questions/import", asyncRoute(async (req, res) => {
+  app.post("/admin/questions/import", requireAdmin, asyncRoute(async (req, res) => {
     res.status(201).json(await store.importQuestions(req.body));
   }));
 
-  app.post("/admin/simulation/import", asyncRoute(async (req, res) => {
+  app.post("/admin/simulation/import", requireAdmin, asyncRoute(async (req, res) => {
     res.status(201).json(await store.importSimulationQuestions(req.body));
   }));
 
-  app.post("/admin/questions", asyncRoute(async (req, res) => {
+  app.post("/admin/questions", requireAdmin, asyncRoute(async (req, res) => {
     res.status(201).json(await store.createQuestion(req.body));
   }));
 }
@@ -191,6 +192,21 @@ if (!process.env.VERCEL) {
 }
 
 export default app;
+
+const defaultAdminPasswordHash = "632be5e7df180b51682e87b6a1ece695c8662a782dd6ea3597b63e3cd88a567c";
+
+function requireAdmin(req, res, next) {
+  const password = String(req.get("x-admin-password") || "");
+  const expectedHash = process.env.ADMIN_PASSWORD_HASH || defaultAdminPasswordHash;
+  const receivedHash = crypto.createHash("sha256").update(password).digest("hex");
+  const expected = Buffer.from(expectedHash, "hex");
+  const received = Buffer.from(receivedHash, "hex");
+  if (expected.length !== received.length || !crypto.timingSafeEqual(expected, received)) {
+    res.status(401).json({ error: "Senha de administrador invalida." });
+    return;
+  }
+  next();
+}
 
 async function getStore() {
   if (store) return store;
