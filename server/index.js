@@ -67,6 +67,60 @@ app.post("/api/admin/questions", asyncRoute(async (req, res) => {
   res.status(201).json(await store.createQuestion(req.body));
 }));
 
+if (process.env.VERCEL) {
+  app.get("/health", (_req, res) => {
+    res.json({ ok: true, app: "Estuda+", db: store.name });
+  });
+
+  app.get("/subjects", asyncRoute(async (_req, res) => {
+    res.json(await store.listSubjects());
+  }));
+
+  app.patch("/subjects/:id", asyncRoute(async (req, res) => {
+    res.json(await store.updateSubject(req.params.id, req.body));
+  }));
+
+  app.delete("/subjects/:id", asyncRoute(async (req, res) => {
+    res.json(await store.deleteSubject(req.params.id));
+  }));
+
+  app.get("/subjects/:id/quiz", asyncRoute(async (req, res) => {
+    res.json(await store.getQuiz(req.params.id));
+  }));
+
+  app.post("/subjects/:id/attempts", asyncRoute(async (req, res) => {
+    res.status(201).json(await store.createAttempt(req.params.id, req.body));
+  }));
+
+  app.get("/history", asyncRoute(async (_req, res) => {
+    res.json(await store.getHistory());
+  }));
+
+  app.get("/ranking", asyncRoute(async (_req, res) => {
+    res.json(await store.getRanking());
+  }));
+
+  app.get("/profile", asyncRoute(async (_req, res) => {
+    res.json(await store.getProfile());
+  }));
+
+  app.get("/backup", asyncRoute(async (_req, res) => {
+    res.json(await store.getBackup());
+  }));
+
+  app.post("/backup/restore", asyncRoute(async (req, res) => {
+    res.json(await store.restoreBackup(req.body));
+  }));
+
+  app.post("/admin/questions/import", asyncRoute(async (req, res) => {
+    res.status(201).json(await store.importQuestions(req.body));
+  }));
+
+  app.post("/admin/questions", asyncRoute(async (req, res) => {
+    res.status(201).json(await store.createQuestion(req.body));
+  }));
+}
+
 app.use("/api", (_req, res) => {
   res.status(404).json({ error: "Rota de API nao encontrada." });
 });
