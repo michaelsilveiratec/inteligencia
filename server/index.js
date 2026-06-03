@@ -8,12 +8,15 @@ import { loadEnv } from "./env.js";
 const app = express();
 loadEnv();
 const port = process.env.PORT || 3333;
-const store = await createDataStore();
-
-await store.init();
+let store;
+let storePromise;
 
 app.use(cors());
 app.use(express.json({ limit: "20mb" }));
+app.use(asyncRoute(async (_req, _res, next) => {
+  await getStore();
+  next();
+}));
 
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true, app: "Estuda+", db: store.name });
@@ -141,12 +144,30 @@ app.use((error, _req, res, _next) => {
 });
 
 if (!process.env.VERCEL) {
+  await getStore();
   app.listen(port, () => {
     console.log(`Estuda+ em http://127.0.0.1:${port} usando ${store.name}`);
   });
 }
 
 export default app;
+
+async function getStore() {
+  if (store) return store;
+  if (!storePromise) {
+    storePromise = createDataStore()
+      .then(async (dataStore) => {
+        await dataStore.init();
+        store = dataStore;
+        return store;
+      })
+      .catch((error) => {
+        storePromise = null;
+        throw error;
+      });
+  }
+  return storePromise;
+}
 
 function asyncRoute(handler) {
   return (req, res, next) => {

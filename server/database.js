@@ -18,6 +18,9 @@ export async function createDataStore(options = {}) {
   if (databaseUrl) {
     return createPostgresStore({ ...options, databaseUrl });
   }
+  if (process.env.VERCEL) {
+    throw httpError("DATABASE_URL nao configurada na Vercel.", 500);
+  }
   return createSqliteStore(options);
 }
 
