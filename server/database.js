@@ -2,7 +2,20 @@ import fs from "node:fs";
 import path from "node:path";
 
 const studentId = 1;
-const backupTables = ["professores", "materias", "questoes", "alternativas", "usuarios", "tentativas", "respostas"];
+const simulationUnlockSubjectCount = 7;
+const backupTables = [
+  "professores",
+  "materias",
+  "questoes",
+  "alternativas",
+  "usuarios",
+  "tentativas",
+  "respostas",
+  "simulado_questoes",
+  "simulado_alternativas",
+  "simulado_tentativas",
+  "simulado_respostas"
+];
 const backupColumns = {
   professores: ["id", "nome", "email", "criado_em"],
   materias: ["id", "professor_id", "nome", "icone", "cor", "descricao", "ativo", "criado_em"],
@@ -10,7 +23,11 @@ const backupColumns = {
   alternativas: ["id", "questao_id", "texto", "correta", "ordem"],
   usuarios: ["id", "nome", "email", "criado_em"],
   tentativas: ["id", "usuario_id", "materia_id", "total_questoes", "acertos", "pontuacao", "duracao_segundos", "criado_em"],
-  respostas: ["id", "tentativa_id", "questao_id", "alternativa_id", "correta"]
+  respostas: ["id", "tentativa_id", "questao_id", "alternativa_id", "correta"],
+  simulado_questoes: ["id", "enunciado", "dificuldade", "ativo", "criado_em"],
+  simulado_alternativas: ["id", "questao_id", "texto", "correta", "ordem"],
+  simulado_tentativas: ["id", "usuario_id", "total_questoes", "acertos", "pontuacao", "duracao_segundos", "criado_em"],
+  simulado_respostas: ["id", "tentativa_id", "questao_id", "alternativa_id", "correta"]
 };
 
 export async function createDataStore(options = {}) {
@@ -150,6 +167,51 @@ class SqliteStore {
     };
   }
 
+  async getSimulationStatus(studentName) {
+    const student = await this.getOrCreateStudent(studentName);
+    const completedSubjects = this.db.prepare(`
+      SELECT COUNT(DISTINCT materia_id) as total
+      FROM tentativas
+      WHERE usuario_id = ?
+    `).get(student.id).total;
+    const questionCount = this.db.prepare("SELECT COUNT(*) as total FROM simulado_questoes WHERE ativo = 1").get().total;
+    const attempts = this.db.prepare("SELECT COUNT(*) as total FROM simulado_tentativas WHERE usuario_id = ?").get(student.id).total;
+    return {
+      unlocked: completedSubjects >= simulationUnlockSubjectCount,
+      requiredSubjects: simulationUnlockSubjectCount,
+      completedSubjects,
+      questionCount,
+      attempts
+    };
+  }
+
+  async getSimulationQuiz(studentName) {
+    const status = await this.getSimulationStatus(studentName);
+    if (!status.unlocked) throw httpError(`Simulado liberado apos responder ${simulationUnlockSubjectCount} materias.`);
+    if (!status.questionCount) throw httpError("Simulado ainda nao possui questoes.");
+
+    const questions = this.db.prepare(`
+      SELECT id, enunciado, dificuldade
+      FROM simulado_questoes
+      WHERE ativo = 1
+      ORDER BY id
+    `).all();
+
+    return {
+      status,
+      subject: { id: "simulado", nome: "Simulado", professor: "Competicao" },
+      questions: questions.map((question) => ({
+        ...question,
+        alternatives: this.db.prepare(`
+          SELECT id, texto, ordem
+          FROM simulado_alternativas
+          WHERE questao_id = ?
+          ORDER BY ordem, id
+        `).all(question.id)
+      }))
+    };
+  }
+
   async createAttempt(subjectId, body) {
     const subject = this.getSubjectSync(subjectId);
     if (!subject) throw httpError("Materia nao encontrada.", 404);
@@ -222,30 +284,113 @@ class SqliteStore {
     };
   }
 
+  async createSimulationAttempt(body) {
+    const student = await this.getOrCreateStudent(body.studentName);
+    const status = await this.getSimulationStatus(student.nome);
+    if (!status.unlocked) throw httpError(`Simulado liberado apos responder ${simulationUnlockSubjectCount} materias.`);
+
+    const answers = Array.isArray(body.answers) ? body.answers : [];
+    const questions = this.db.prepare(`
+      SELECT id, enunciado
+      FROM simulado_questoes
+      WHERE ativo = 1
+      ORDER BY id
+    `).all();
+
+    if (!questions.length) throw httpError("Simulado ainda nao possui questoes.");
+
+    const answerByQuestion = new Map(answers.map((answer) => [
+      Number(answer.questionId),
+      cleanNumber(answer.alternativeId)
+    ]));
+
+    let correctCount = 0;
+    const details = questions.map((question) => {
+      const selectedAlternativeId = answerByQuestion.get(question.id) || null;
+      const correctAlternative = this.db.prepare(`
+        SELECT id, texto
+        FROM simulado_alternativas
+        WHERE questao_id = ? AND correta = 1
+        ORDER BY ordem, id
+        LIMIT 1
+      `).get(question.id);
+      const selectedAlternative = selectedAlternativeId
+        ? this.db.prepare("SELECT id, texto FROM simulado_alternativas WHERE id = ?").get(selectedAlternativeId)
+        : null;
+      const correct = Boolean(selectedAlternativeId && correctAlternative?.id === selectedAlternativeId);
+      if (correct) correctCount += 1;
+      return {
+        questionId: question.id,
+        question: question.enunciado,
+        selectedAlternativeId,
+        selectedText: selectedAlternative?.texto || "",
+        correctAlternativeId: correctAlternative?.id || null,
+        correctText: correctAlternative?.texto || "",
+        correct
+      };
+    });
+
+    const score = Math.round((correctCount / questions.length) * 100);
+    const durationSeconds = cleanDuration(body.durationSeconds);
+    const attemptId = this.db.prepare(`
+      INSERT INTO simulado_tentativas (usuario_id, total_questoes, acertos, pontuacao, duracao_segundos)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(student.id, questions.length, correctCount, score, durationSeconds).lastInsertRowid;
+
+    const insertAnswer = this.db.prepare(`
+      INSERT INTO simulado_respostas (tentativa_id, questao_id, alternativa_id, correta)
+      VALUES (?, ?, ?, ?)
+    `);
+    for (const detail of details) {
+      insertAnswer.run(attemptId, detail.questionId, detail.selectedAlternativeId, detail.correct ? 1 : 0);
+    }
+
+    return {
+      attemptId,
+      subject: { id: "simulado", nome: "Simulado", professor: "Competicao" },
+      student,
+      score,
+      correctCount,
+      total: questions.length,
+      durationSeconds,
+      details
+    };
+  }
+
   async getHistory(studentName) {
     const student = await this.getOrCreateStudent(studentName);
     return this.db.prepare(`
       SELECT t.id, t.total_questoes, t.acertos, t.pontuacao, t.duracao_segundos, t.criado_em,
-             m.nome as materia, p.nome as professor
+             m.nome as materia, p.nome as professor, 'materia' as tipo
       FROM tentativas t
       JOIN materias m ON m.id = t.materia_id
       JOIN professores p ON p.id = m.professor_id
       WHERE t.usuario_id = ?
-      ORDER BY t.criado_em DESC
-    `).all(student.id);
+      UNION ALL
+      SELECT st.id, st.total_questoes, st.acertos, st.pontuacao, st.duracao_segundos, st.criado_em,
+             'Simulado' as materia, 'Competicao' as professor, 'simulado' as tipo
+      FROM simulado_tentativas st
+      WHERE st.usuario_id = ?
+      ORDER BY criado_em DESC
+    `).all(student.id, student.id);
   }
 
   async getRanking() {
     const rows = this.db.prepare(`
+      WITH all_attempts AS (
+        SELECT usuario_id, acertos, total_questoes, pontuacao FROM tentativas
+        UNION ALL
+        SELECT usuario_id, acertos, total_questoes, pontuacao FROM simulado_tentativas
+      )
       SELECT u.id, u.nome as aluno,
-             COUNT(t.id) as tentativas,
-             COALESCE(SUM(t.acertos), 0) as acertos,
-             COALESCE(SUM(t.total_questoes), 0) as total_questoes,
-             COALESCE(SUM((t.acertos * 10) + t.pontuacao), 0) as pontos,
-             COALESCE(MAX(t.pontuacao), 0) as melhor_pontuacao,
-             COALESCE(ROUND(AVG(t.pontuacao)), 0) as media
+             COUNT(a.usuario_id) as tentativas,
+             COALESCE(SUM(a.acertos), 0) as acertos,
+             COALESCE(SUM(a.total_questoes), 0) as total_questoes,
+             COALESCE(SUM((a.acertos * 10) + a.pontuacao), 0) as pontos,
+             COALESCE(MAX(a.pontuacao), 0) as melhor_pontuacao,
+             COALESCE(ROUND(AVG(a.pontuacao)), 0) as media
       FROM usuarios u
-      LEFT JOIN tentativas t ON t.usuario_id = u.id
+      LEFT JOIN all_attempts a ON a.usuario_id = u.id
       GROUP BY u.id
       ORDER BY pontos DESC, acertos DESC, media DESC, u.nome
     `).all();
@@ -255,15 +400,19 @@ class SqliteStore {
   async getProfile(studentName) {
     const user = await this.getOrCreateStudent(studentName);
     const stats = this.db.prepare(`
+      WITH all_attempts AS (
+        SELECT acertos, total_questoes, pontuacao, duracao_segundos FROM tentativas WHERE usuario_id = ?
+        UNION ALL
+        SELECT acertos, total_questoes, pontuacao, duracao_segundos FROM simulado_tentativas WHERE usuario_id = ?
+      )
       SELECT COUNT(*) as attempts,
              COALESCE(SUM(acertos), 0) as correct,
              COALESCE(SUM(total_questoes - acertos), 0) as wrong,
              COALESCE(ROUND(AVG(pontuacao)), 0) as average,
              COALESCE(SUM((acertos * 10) + pontuacao), 0) as points,
              COALESCE(SUM(duracao_segundos), 0) as durationSeconds
-      FROM tentativas
-      WHERE usuario_id = ?
-    `).get(user.id);
+      FROM all_attempts
+    `).get(user.id, user.id);
     return { user, stats };
   }
 
@@ -290,7 +439,7 @@ class SqliteStore {
       for (const table of backupTables.slice().reverse()) {
         this.db.prepare(`DELETE FROM ${table}`).run();
       }
-      this.db.prepare("DELETE FROM sqlite_sequence WHERE name IN (?, ?, ?, ?, ?, ?, ?)").run(...backupTables);
+      this.db.prepare(`DELETE FROM sqlite_sequence WHERE name IN (${backupTables.map(() => "?").join(", ")})`).run(...backupTables);
 
       for (const table of backupTables) {
         for (const row of backup.tables[table]) {
@@ -312,6 +461,23 @@ class SqliteStore {
     const importQuestions = this.db.transaction(() => {
       for (const item of items) {
         const importedItem = this.insertQuestionFromImport(item);
+        if (importedItem) imported.push(importedItem);
+      }
+    });
+
+    importQuestions();
+    if (!imported.length) throw httpError("Nenhuma pergunta valida foi encontrada.");
+    return { ok: true, imported: imported.length, items: imported };
+  }
+
+  async importSimulationQuestions(payload) {
+    const items = normalizeQuestionImport(payload);
+    if (!items.length) throw httpError("Arquivo sem perguntas validas.");
+
+    const imported = [];
+    const importQuestions = this.db.transaction(() => {
+      for (const item of items) {
+        const importedItem = this.insertSimulationQuestionFromImport(item);
         if (importedItem) imported.push(importedItem);
       }
     });
@@ -387,6 +553,31 @@ class SqliteStore {
     });
 
     return { questionId, subjectId, subject: subjectName };
+  }
+
+  insertSimulationQuestionFromImport(item) {
+    const statement = cleanText(item.statement || item.enunciado || item.question || item.pergunta);
+    const alternatives = normalizeAlternatives(item);
+    const correctIndex = normalizeCorrectIndex(item, alternatives);
+
+    if (!statement || alternatives.length < 2 || correctIndex < 0) {
+      return null;
+    }
+
+    const questionId = this.db.prepare(`
+      INSERT INTO simulado_questoes (enunciado, dificuldade)
+      VALUES (?, ?)
+    `).run(statement, cleanText(item.difficulty || item.dificuldade) || "Media").lastInsertRowid;
+
+    const insertAlternative = this.db.prepare(`
+      INSERT INTO simulado_alternativas (questao_id, texto, correta, ordem)
+      VALUES (?, ?, ?, ?)
+    `);
+    alternatives.forEach((alternative, index) => {
+      insertAlternative.run(questionId, alternative.text, index === correctIndex ? 1 : 0, index + 1);
+    });
+
+    return { questionId, subject: "Simulado" };
   }
 
   insertBackupRow(table, row) {
@@ -559,6 +750,54 @@ class PostgresStore {
     return { subject, questions };
   }
 
+  async getSimulationStatus(studentName) {
+    const student = await this.getOrCreateStudent(studentName);
+    const { rows: subjectRows } = await this.pool.query(`
+      SELECT COUNT(DISTINCT materia_id)::int as total
+      FROM tentativas
+      WHERE usuario_id = $1
+    `, [student.id]);
+    const { rows: questionRows } = await this.pool.query("SELECT COUNT(*)::int as total FROM simulado_questoes WHERE ativo = 1");
+    const { rows: attemptRows } = await this.pool.query("SELECT COUNT(*)::int as total FROM simulado_tentativas WHERE usuario_id = $1", [student.id]);
+    const completedSubjects = subjectRows[0].total;
+    return {
+      unlocked: completedSubjects >= simulationUnlockSubjectCount,
+      requiredSubjects: simulationUnlockSubjectCount,
+      completedSubjects,
+      questionCount: questionRows[0].total,
+      attempts: attemptRows[0].total
+    };
+  }
+
+  async getSimulationQuiz(studentName) {
+    const status = await this.getSimulationStatus(studentName);
+    if (!status.unlocked) throw httpError(`Simulado liberado apos responder ${simulationUnlockSubjectCount} materias.`);
+    if (!status.questionCount) throw httpError("Simulado ainda nao possui questoes.");
+
+    const { rows: questions } = await this.pool.query(`
+      SELECT id, enunciado, dificuldade
+      FROM simulado_questoes
+      WHERE ativo = 1
+      ORDER BY id
+    `);
+
+    for (const question of questions) {
+      const { rows: alternatives } = await this.pool.query(`
+        SELECT id, texto, ordem
+        FROM simulado_alternativas
+        WHERE questao_id = $1
+        ORDER BY ordem, id
+      `, [question.id]);
+      question.alternatives = alternatives;
+    }
+
+    return {
+      status,
+      subject: { id: "simulado", nome: "Simulado", professor: "Competicao" },
+      questions
+    };
+  }
+
   async createAttempt(subjectId, body) {
     const client = await this.pool.connect();
     try {
@@ -645,31 +884,134 @@ class PostgresStore {
     }
   }
 
+  async createSimulationAttempt(body) {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const student = await this.getOrCreateStudent(body.studentName, client);
+      const { rows: subjectRows } = await client.query(`
+        SELECT COUNT(DISTINCT materia_id)::int as total
+        FROM tentativas
+        WHERE usuario_id = $1
+      `, [student.id]);
+      if (subjectRows[0].total < simulationUnlockSubjectCount) {
+        throw httpError(`Simulado liberado apos responder ${simulationUnlockSubjectCount} materias.`);
+      }
+
+      const answers = Array.isArray(body.answers) ? body.answers : [];
+      const { rows: questions } = await client.query(`
+        SELECT id, enunciado
+        FROM simulado_questoes
+        WHERE ativo = 1
+        ORDER BY id
+      `);
+
+      if (!questions.length) throw httpError("Simulado ainda nao possui questoes.");
+
+      const answerByQuestion = new Map(answers.map((answer) => [
+        Number(answer.questionId),
+        cleanNumber(answer.alternativeId)
+      ]));
+
+      let correctCount = 0;
+      const details = [];
+      for (const question of questions) {
+        const selectedAlternativeId = answerByQuestion.get(question.id) || null;
+        const { rows: correctRows } = await client.query(`
+          SELECT id, texto
+          FROM simulado_alternativas
+          WHERE questao_id = $1 AND correta = 1
+          ORDER BY ordem, id
+          LIMIT 1
+        `, [question.id]);
+        const correctAlternative = correctRows[0];
+        const { rows: selectedRows } = selectedAlternativeId
+          ? await client.query("SELECT id, texto FROM simulado_alternativas WHERE id = $1", [selectedAlternativeId])
+          : { rows: [] };
+        const selectedAlternative = selectedRows[0];
+        const correct = Boolean(selectedAlternativeId && correctAlternative?.id === selectedAlternativeId);
+        if (correct) correctCount += 1;
+        details.push({
+          questionId: question.id,
+          question: question.enunciado,
+          selectedAlternativeId,
+          selectedText: selectedAlternative?.texto || "",
+          correctAlternativeId: correctAlternative?.id || null,
+          correctText: correctAlternative?.texto || "",
+          correct
+        });
+      }
+
+      const score = Math.round((correctCount / questions.length) * 100);
+      const durationSeconds = cleanDuration(body.durationSeconds);
+      const { rows: attemptRows } = await client.query(`
+        INSERT INTO simulado_tentativas (usuario_id, total_questoes, acertos, pontuacao, duracao_segundos)
+        VALUES ($1, $2, $3, $4, $5)
+        RETURNING id
+      `, [student.id, questions.length, correctCount, score, durationSeconds]);
+      const attemptId = attemptRows[0].id;
+
+      for (const detail of details) {
+        await client.query(`
+          INSERT INTO simulado_respostas (tentativa_id, questao_id, alternativa_id, correta)
+          VALUES ($1, $2, $3, $4)
+        `, [attemptId, detail.questionId, detail.selectedAlternativeId, detail.correct ? 1 : 0]);
+      }
+
+      await client.query("COMMIT");
+      return {
+        attemptId,
+        subject: { id: "simulado", nome: "Simulado", professor: "Competicao" },
+        student,
+        score,
+        correctCount,
+        total: questions.length,
+        durationSeconds,
+        details
+      };
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async getHistory(studentName) {
     const student = await this.getOrCreateStudent(studentName);
     const { rows } = await this.pool.query(`
       SELECT t.id, t.total_questoes, t.acertos, t.pontuacao, t.duracao_segundos, t.criado_em,
-             m.nome as materia, p.nome as professor
+             m.nome as materia, p.nome as professor, 'materia' as tipo
       FROM tentativas t
       JOIN materias m ON m.id = t.materia_id
       JOIN professores p ON p.id = m.professor_id
       WHERE t.usuario_id = $1
-      ORDER BY t.criado_em DESC
+      UNION ALL
+      SELECT st.id, st.total_questoes, st.acertos, st.pontuacao, st.duracao_segundos, st.criado_em,
+             'Simulado' as materia, 'Competicao' as professor, 'simulado' as tipo
+      FROM simulado_tentativas st
+      WHERE st.usuario_id = $1
+      ORDER BY criado_em DESC
     `, [student.id]);
     return rows;
   }
 
   async getRanking() {
     const { rows } = await this.pool.query(`
+      WITH all_attempts AS (
+        SELECT usuario_id, acertos, total_questoes, pontuacao FROM tentativas
+        UNION ALL
+        SELECT usuario_id, acertos, total_questoes, pontuacao FROM simulado_tentativas
+      )
       SELECT u.id, u.nome as aluno,
-             COUNT(t.id)::int as tentativas,
-             COALESCE(SUM(t.acertos), 0)::int as acertos,
-             COALESCE(SUM(t.total_questoes), 0)::int as total_questoes,
-             COALESCE(SUM((t.acertos * 10) + t.pontuacao), 0)::int as pontos,
-             COALESCE(MAX(t.pontuacao), 0)::int as melhor_pontuacao,
-             COALESCE(ROUND(AVG(t.pontuacao)), 0)::int as media
+             COUNT(a.usuario_id)::int as tentativas,
+             COALESCE(SUM(a.acertos), 0)::int as acertos,
+             COALESCE(SUM(a.total_questoes), 0)::int as total_questoes,
+             COALESCE(SUM((a.acertos * 10) + a.pontuacao), 0)::int as pontos,
+             COALESCE(MAX(a.pontuacao), 0)::int as melhor_pontuacao,
+             COALESCE(ROUND(AVG(a.pontuacao)), 0)::int as media
       FROM usuarios u
-      LEFT JOIN tentativas t ON t.usuario_id = u.id
+      LEFT JOIN all_attempts a ON a.usuario_id = u.id
       GROUP BY u.id, u.nome
       ORDER BY pontos DESC, acertos DESC, media DESC, u.nome
     `);
@@ -679,14 +1021,18 @@ class PostgresStore {
   async getProfile(studentName) {
     const user = await this.getOrCreateStudent(studentName);
     const { rows: statRows } = await this.pool.query(`
+      WITH all_attempts AS (
+        SELECT acertos, total_questoes, pontuacao, duracao_segundos FROM tentativas WHERE usuario_id = $1
+        UNION ALL
+        SELECT acertos, total_questoes, pontuacao, duracao_segundos FROM simulado_tentativas WHERE usuario_id = $1
+      )
       SELECT COUNT(*)::int as attempts,
              COALESCE(SUM(acertos), 0)::int as correct,
              COALESCE(SUM(total_questoes - acertos), 0)::int as wrong,
              COALESCE(ROUND(AVG(pontuacao)), 0)::int as average,
              COALESCE(SUM((acertos * 10) + pontuacao), 0)::int as points,
              COALESCE(SUM(duracao_segundos), 0)::int as "durationSeconds"
-      FROM tentativas
-      WHERE usuario_id = $1
+      FROM all_attempts
     `, [user.id]);
     return { user, stats: statRows[0] };
   }
@@ -743,6 +1089,29 @@ class PostgresStore {
       await client.query("BEGIN");
       for (const item of items) {
         const importedItem = await this.insertQuestionFromImport(client, item);
+        if (importedItem) imported.push(importedItem);
+      }
+      if (!imported.length) throw httpError("Nenhuma pergunta valida foi encontrada.");
+      await client.query("COMMIT");
+      return { ok: true, imported: imported.length, items: imported };
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async importSimulationQuestions(payload) {
+    const items = normalizeQuestionImport(payload);
+    if (!items.length) throw httpError("Arquivo sem perguntas validas.");
+
+    const client = await this.pool.connect();
+    const imported = [];
+    try {
+      await client.query("BEGIN");
+      for (const item of items) {
+        const importedItem = await this.insertSimulationQuestionFromImport(client, item);
         if (importedItem) imported.push(importedItem);
       }
       if (!imported.length) throw httpError("Nenhuma pergunta valida foi encontrada.");
@@ -836,6 +1205,32 @@ class PostgresStore {
     return { questionId, subjectId, subject: subjectName };
   }
 
+  async insertSimulationQuestionFromImport(client, item) {
+    const statement = cleanText(item.statement || item.enunciado || item.question || item.pergunta);
+    const alternatives = normalizeAlternatives(item);
+    const correctIndex = normalizeCorrectIndex(item, alternatives);
+
+    if (!statement || alternatives.length < 2 || correctIndex < 0) {
+      return null;
+    }
+
+    const { rows } = await client.query(`
+      INSERT INTO simulado_questoes (enunciado, dificuldade)
+      VALUES ($1, $2)
+      RETURNING id
+    `, [statement, cleanText(item.difficulty || item.dificuldade) || "Media"]);
+    const questionId = rows[0].id;
+
+    for (const [index, alternative] of alternatives.entries()) {
+      await client.query(`
+        INSERT INTO simulado_alternativas (questao_id, texto, correta, ordem)
+        VALUES ($1, $2, $3, $4)
+      `, [questionId, alternative.text, index === correctIndex ? 1 : 0, index + 1]);
+    }
+
+    return { questionId, subject: "Simulado" };
+  }
+
   async insertBackupRow(client, table, row) {
     const columns = safeBackupColumns(table, row);
     if (!columns.length) return;
@@ -921,6 +1316,7 @@ function normalizeQuestionImport(payload) {
   if (Array.isArray(payload)) return payload;
   if (Array.isArray(payload?.questions)) return payload.questions;
   if (Array.isArray(payload?.questoes)) return payload.questoes;
+  if (Array.isArray(payload?.simulado)) return payload.simulado;
   if (payload && typeof payload === "object" && !payload.tables) return [payload];
   return [];
 }
@@ -959,9 +1355,8 @@ function validateBackup(backup) {
     throw httpError("Backup invalido.");
   }
   for (const table of backupTables) {
-    if (!Array.isArray(backup.tables[table])) {
-      throw httpError(`Backup sem tabela ${table}.`);
-    }
+    if (backup.tables[table] === undefined && table.startsWith("simulado_")) backup.tables[table] = [];
+    if (!Array.isArray(backup.tables[table])) throw httpError(`Backup sem tabela ${table}.`);
   }
 }
 
@@ -1107,6 +1502,45 @@ const sqliteSchema = `
     FOREIGN KEY(questao_id) REFERENCES questoes(id) ON DELETE CASCADE,
     FOREIGN KEY(alternativa_id) REFERENCES alternativas(id) ON DELETE SET NULL
   );
+
+  CREATE TABLE IF NOT EXISTS simulado_questoes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    enunciado TEXT NOT NULL,
+    dificuldade TEXT DEFAULT 'Media',
+    ativo INTEGER NOT NULL DEFAULT 1,
+    criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS simulado_alternativas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    questao_id INTEGER NOT NULL,
+    texto TEXT NOT NULL,
+    correta INTEGER NOT NULL DEFAULT 0,
+    ordem INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY(questao_id) REFERENCES simulado_questoes(id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS simulado_tentativas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    usuario_id INTEGER NOT NULL,
+    total_questoes INTEGER NOT NULL,
+    acertos INTEGER NOT NULL,
+    pontuacao INTEGER NOT NULL,
+    duracao_segundos INTEGER NOT NULL DEFAULT 0,
+    criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(usuario_id) REFERENCES usuarios(id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS simulado_respostas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tentativa_id INTEGER NOT NULL,
+    questao_id INTEGER NOT NULL,
+    alternativa_id INTEGER,
+    correta INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY(tentativa_id) REFERENCES simulado_tentativas(id) ON DELETE CASCADE,
+    FOREIGN KEY(questao_id) REFERENCES simulado_questoes(id) ON DELETE CASCADE,
+    FOREIGN KEY(alternativa_id) REFERENCES simulado_alternativas(id) ON DELETE SET NULL
+  );
 `;
 
 const postgresSchema = `
@@ -1169,6 +1603,40 @@ const postgresSchema = `
     tentativa_id INTEGER NOT NULL REFERENCES tentativas(id) ON DELETE CASCADE,
     questao_id INTEGER NOT NULL REFERENCES questoes(id) ON DELETE CASCADE,
     alternativa_id INTEGER REFERENCES alternativas(id) ON DELETE SET NULL,
+    correta INTEGER NOT NULL DEFAULT 0
+  );
+
+  CREATE TABLE IF NOT EXISTS simulado_questoes (
+    id SERIAL PRIMARY KEY,
+    enunciado TEXT NOT NULL,
+    dificuldade TEXT DEFAULT 'Media',
+    ativo INTEGER NOT NULL DEFAULT 1,
+    criado_em TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS simulado_alternativas (
+    id SERIAL PRIMARY KEY,
+    questao_id INTEGER NOT NULL REFERENCES simulado_questoes(id) ON DELETE CASCADE,
+    texto TEXT NOT NULL,
+    correta INTEGER NOT NULL DEFAULT 0,
+    ordem INTEGER NOT NULL DEFAULT 0
+  );
+
+  CREATE TABLE IF NOT EXISTS simulado_tentativas (
+    id SERIAL PRIMARY KEY,
+    usuario_id INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
+    total_questoes INTEGER NOT NULL,
+    acertos INTEGER NOT NULL,
+    pontuacao INTEGER NOT NULL,
+    duracao_segundos INTEGER NOT NULL DEFAULT 0,
+    criado_em TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS simulado_respostas (
+    id SERIAL PRIMARY KEY,
+    tentativa_id INTEGER NOT NULL REFERENCES simulado_tentativas(id) ON DELETE CASCADE,
+    questao_id INTEGER NOT NULL REFERENCES simulado_questoes(id) ON DELETE CASCADE,
+    alternativa_id INTEGER REFERENCES simulado_alternativas(id) ON DELETE SET NULL,
     correta INTEGER NOT NULL DEFAULT 0
   );
 `;

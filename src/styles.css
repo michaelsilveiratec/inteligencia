@@ -237,6 +237,66 @@ button:disabled {
   font-size: 0.88rem;
 }
 
+.simulationHero {
+  min-height: 178px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: var(--shadow);
+  padding: clamp(18px, 3vw, 30px);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.simulationHero.unlocked {
+  border-color: #9ee6bb;
+  background: #f7fef9;
+}
+
+.simulationHero h2,
+.simulationHero p {
+  margin: 0;
+}
+
+.simulationHero p {
+  margin-top: 10px;
+  color: var(--muted);
+}
+
+.simulationBadge {
+  min-width: 138px;
+  border: 1px solid #d9e8ff;
+  border-radius: 8px;
+  background: #f8fbff;
+  color: var(--blue);
+  padding: 16px;
+  display: grid;
+  gap: 5px;
+  place-items: center;
+}
+
+.simulationBadge strong {
+  color: var(--ink);
+  font-size: 2rem;
+}
+
+.simulationBadge span {
+  color: var(--muted);
+}
+
+.simulationProgress {
+  height: 12px;
+}
+
+.simulationActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .dashboardGrid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 300px;
@@ -926,7 +986,7 @@ textarea {
     border-top: 1px solid var(--line);
     background: #fff;
     display: grid;
-    grid-template-columns: repeat(5, 1fr);
+    grid-template-columns: repeat(6, 1fr);
   }
 
   .mobileNav button {
@@ -963,6 +1023,7 @@ textarea {
   }
 
   .welcomePanel,
+  .simulationHero,
   .quizHeader,
   .quizActions,
   .resultActions {
@@ -984,6 +1045,10 @@ textarea {
   }
 
   .welcomeBadge {
+    width: 100%;
+  }
+
+  .simulationBadge {
     width: 100%;
   }
 

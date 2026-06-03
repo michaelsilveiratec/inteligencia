@@ -44,6 +44,7 @@ const iconMap = {
 
 const navItems = [
   { id: "home", label: "Inicio", icon: Home },
+  { id: "simulation", label: "Simulado", icon: Trophy },
   { id: "history", label: "Historico", icon: ListChecks },
   { id: "ranking", label: "Ranking", icon: BarChart3 },
   { id: "profile", label: "Perfil", icon: UserRound },
@@ -68,7 +69,9 @@ function App() {
   const [history, setHistory] = useState([]);
   const [ranking, setRanking] = useState([]);
   const [profile, setProfile] = useState(null);
+  const [simulationStatus, setSimulationStatus] = useState(null);
   const [quiz, setQuiz] = useState(null);
+  const [quizMode, setQuizMode] = useState("subject");
   const [questionIndex, setQuestionIndex] = useState(0);
   const [answers, setAnswers] = useState({});
   const [result, setResult] = useState(null);
@@ -100,16 +103,18 @@ function App() {
     try {
       await apiPost("/api/students", { name: studentName });
       const studentQuery = `studentName=${encodeURIComponent(studentName)}`;
-      const [subjectsData, historyData, rankingData, profileData] = await Promise.all([
+      const [subjectsData, historyData, rankingData, profileData, simulationData] = await Promise.all([
         apiGet("/api/subjects"),
         apiGet(`/api/history?${studentQuery}`),
         apiGet("/api/ranking"),
-        apiGet(`/api/profile?${studentQuery}`)
+        apiGet(`/api/profile?${studentQuery}`),
+        apiGet(`/api/simulation/status?${studentQuery}`)
       ]);
       setSubjects(subjectsData);
       setHistory(historyData);
       setRanking(rankingData);
       setProfile(profileData);
+      setSimulationStatus(simulationData);
     } catch (error) {
       showNotice(error.message || "Falha ao carregar dados.");
     } finally {
@@ -130,6 +135,7 @@ function App() {
         return;
       }
       setQuiz(data);
+      setQuizMode("subject");
       setQuestionIndex(0);
       setAnswers({});
       setResult(null);
@@ -138,6 +144,22 @@ function App() {
       setActive("quiz");
     } catch (error) {
       showNotice(error.message || "Nao foi possivel abrir o quiz.");
+    }
+  }
+
+  async function startSimulation() {
+    try {
+      const data = await apiGet(`/api/simulation/quiz?studentName=${encodeURIComponent(studentName)}`);
+      setQuiz(data);
+      setQuizMode("simulation");
+      setQuestionIndex(0);
+      setAnswers({});
+      setResult(null);
+      setElapsedSeconds(0);
+      setQuizStartedAt(Date.now());
+      setActive("quiz");
+    } catch (error) {
+      showNotice(error.message || "Nao foi possivel abrir o simulado.");
     }
   }
 
@@ -157,7 +179,9 @@ function App() {
           alternativeId: answers[question.id] || null
         }))
       };
-      const data = await apiPost(`/api/subjects/${quiz.subject.id}/attempts`, payload);
+      const data = quizMode === "simulation"
+        ? await apiPost("/api/simulation/attempts", payload)
+        : await apiPost(`/api/subjects/${quiz.subject.id}/attempts`, payload);
       playQuizTone("finish");
       setResult(data);
       setQuizStartedAt(null);
@@ -175,6 +199,7 @@ function App() {
     setQuestionIndex(0);
     setQuizStartedAt(null);
     setElapsedSeconds(0);
+    setQuizMode("subject");
     setActive("home");
   }
 
@@ -241,6 +266,13 @@ function App() {
             onDeleteSubject={deleteSubject}
           />
         )}
+        {active === "simulation" && (
+          <SimulationScreen
+            status={simulationStatus}
+            onStart={startSimulation}
+            onRefresh={refreshAll}
+          />
+        )}
         {active === "quiz" && quiz && currentQuestion && (
           <QuizScreen
             quiz={quiz}
@@ -257,7 +289,11 @@ function App() {
           />
         )}
         {active === "result" && result && (
-          <ResultScreen result={result} onRestart={() => startQuiz(result.subject)} onHome={exitQuiz} />
+          <ResultScreen
+            result={result}
+            onRestart={() => (result.subject.id === "simulado" ? startSimulation() : startQuiz(result.subject))}
+            onHome={exitQuiz}
+          />
         )}
         {active === "history" && <HistoryScreen history={history} />}
         {active === "ranking" && <RankingScreen ranking={ranking} />}
@@ -420,6 +456,53 @@ function HomeScreen({ subjects, history, loading, onStartQuiz, onEditSubject, on
           <Metric label="Ultima materia" value={lastAttempt?.materia || "-"} />
         </aside>
       </div>
+    </section>
+  );
+}
+
+function SimulationScreen({ status, onStart, onRefresh }) {
+  const completed = status?.completedSubjects || 0;
+  const required = status?.requiredSubjects || 7;
+  const progress = Math.min(100, Math.round((completed / required) * 100));
+  const unlocked = Boolean(status?.unlocked);
+  const hasQuestions = Boolean(status?.questionCount);
+
+  return (
+    <section className="panelScreen">
+      <HeaderBlock
+        title="Simulado"
+        subtitle="A prova fica liberada quando o aluno responder quizzes de 7 materias diferentes."
+      />
+      <div className={unlocked ? "simulationHero unlocked" : "simulationHero"}>
+        <div>
+          <span className="eyebrow">{unlocked ? "Liberado" : "Bloqueado"}</span>
+          <h2>{unlocked ? "Simulado disponivel para refazer quantas vezes quiser." : "Continue treinando nas materias."}</h2>
+          <p>{completed} de {required} materias respondidas. Depois de liberar, o simulado permanece aberto.</p>
+        </div>
+        <div className="simulationBadge">
+          <Trophy size={26} />
+          <strong>{status?.questionCount || 0}</strong>
+          <span>questoes</span>
+        </div>
+      </div>
+
+      <div className="progressBar simulationProgress">
+        <span style={{ width: `${progress}%` }} />
+      </div>
+
+      <div className="simulationActions">
+        <button className="secondaryButton" type="button" onClick={onRefresh}>
+          Atualizar
+        </button>
+        <button className="primaryButton" type="button" onClick={onStart} disabled={!unlocked || !hasQuestions}>
+          <Trophy size={18} />
+          Iniciar simulado
+        </button>
+      </div>
+
+      {!hasQuestions && (
+        <div className="emptyState">Importe um JSON de simulado na aba Cadastrar para liberar questoes nesta prova.</div>
+      )}
     </section>
   );
 }
@@ -637,7 +720,7 @@ function HistoryScreen({ history }) {
       <HeaderBlock title="Historico" subtitle="Veja suas tentativas por materia." />
       <div className="historyList">
         {history.map((attempt) => (
-          <article className="historyRow" key={attempt.id}>
+          <article className="historyRow" key={`${attempt.tipo || "materia"}-${attempt.id}`}>
             <div>
               <strong>{attempt.materia}</strong>
               <span>{attempt.professor}</span>
@@ -775,6 +858,24 @@ function AdminScreen({ subjects, onSaved }) {
     }
   }
 
+  async function importSimulation(event) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+
+    setRestoring(true);
+    try {
+      const text = await file.text();
+      const payload = parseJsonFile(text);
+      const result = await apiPost("/api/admin/simulation/import", payload);
+      await onSaved(`${result.imported} questoes importadas para o simulado.`);
+    } catch (error) {
+      await onSaved(error.message || "Nao foi possivel importar o simulado.");
+    } finally {
+      setRestoring(false);
+    }
+  }
+
   return (
     <section className="panelScreen">
       <HeaderBlock
@@ -795,6 +896,11 @@ function AdminScreen({ subjects, onSaved }) {
             <Upload size={18} />
             {restoring ? "Restaurando..." : "Importar"}
             <input type="file" accept="application/json,.json" onChange={restoreBackup} disabled={restoring} />
+          </label>
+          <label className={restoring ? "secondaryButton disabled" : "secondaryButton"}>
+            <Trophy size={18} />
+            Simulado JSON
+            <input type="file" accept="application/json,.json" onChange={importSimulation} disabled={restoring} />
           </label>
         </div>
       </div>

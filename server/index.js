@@ -46,6 +46,18 @@ app.post("/api/subjects/:id/attempts", asyncRoute(async (req, res) => {
   res.status(201).json(await store.createAttempt(req.params.id, req.body));
 }));
 
+app.get("/api/simulation/status", asyncRoute(async (req, res) => {
+  res.json(await store.getSimulationStatus(req.query.studentName));
+}));
+
+app.get("/api/simulation/quiz", asyncRoute(async (req, res) => {
+  res.json(await store.getSimulationQuiz(req.query.studentName));
+}));
+
+app.post("/api/simulation/attempts", asyncRoute(async (req, res) => {
+  res.status(201).json(await store.createSimulationAttempt(req.body));
+}));
+
 app.get("/api/history", asyncRoute(async (_req, res) => {
   res.json(await store.getHistory(_req.query.studentName));
 }));
@@ -68,6 +80,10 @@ app.post("/api/backup/restore", asyncRoute(async (req, res) => {
 
 app.post("/api/admin/questions/import", asyncRoute(async (req, res) => {
   res.status(201).json(await store.importQuestions(req.body));
+}));
+
+app.post("/api/admin/simulation/import", asyncRoute(async (req, res) => {
+  res.status(201).json(await store.importSimulationQuestions(req.body));
 }));
 
 app.post("/api/admin/questions", asyncRoute(async (req, res) => {
@@ -103,6 +119,18 @@ if (process.env.VERCEL) {
     res.status(201).json(await store.createAttempt(req.params.id, req.body));
   }));
 
+  app.get("/simulation/status", asyncRoute(async (req, res) => {
+    res.json(await store.getSimulationStatus(req.query.studentName));
+  }));
+
+  app.get("/simulation/quiz", asyncRoute(async (req, res) => {
+    res.json(await store.getSimulationQuiz(req.query.studentName));
+  }));
+
+  app.post("/simulation/attempts", asyncRoute(async (req, res) => {
+    res.status(201).json(await store.createSimulationAttempt(req.body));
+  }));
+
   app.get("/history", asyncRoute(async (req, res) => {
     res.json(await store.getHistory(req.query.studentName));
   }));
@@ -125,6 +153,10 @@ if (process.env.VERCEL) {
 
   app.post("/admin/questions/import", asyncRoute(async (req, res) => {
     res.status(201).json(await store.importQuestions(req.body));
+  }));
+
+  app.post("/admin/simulation/import", asyncRoute(async (req, res) => {
+    res.status(201).json(await store.importSimulationQuestions(req.body));
   }));
 
   app.post("/admin/questions", asyncRoute(async (req, res) => {
