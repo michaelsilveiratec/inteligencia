@@ -374,29 +374,64 @@ function StudentGate({ onSubmit }) {
 
   return (
     <main className="studentGate">
-      <form className="studentCard" onSubmit={submit}>
-        <div className="brandMark"><GraduationCap size={26} /></div>
-        <h1>Entre no ranking da turma</h1>
-        <p>Informe seu nome para salvar seus quizzes, acertos e pontos no placar.</p>
-        <label>
-          <span>Nome do aluno</span>
-          <input
-            value={name}
-            onChange={(event) => {
-              setName(event.target.value);
-              setError("");
-            }}
-            placeholder="Ex.: Ana Silva"
-            autoFocus
-            required
-          />
-        </label>
-        {error && <small className="formError">{error}</small>}
-        <button className="primaryButton" type="submit">
-          <Trophy size={18} />
-          Comecar
-        </button>
-      </form>
+      <section className="studentHero" aria-label="Entrada do aluno">
+        <div className="studentHeroCopy">
+          <div className="studentBrand">
+            <div className="brandMark"><GraduationCap size={26} /></div>
+            <strong>Estuda+</strong>
+          </div>
+          <span className="eyebrow">Desafio da turma</span>
+          <h1>Entre, responda quizzes e suba no ranking.</h1>
+          <p>Cada acerto vira ponto, cada simulado conta para sua evolucao, e seu nome fica salvo para acompanhar o progresso.</p>
+          <div className="studentHighlights" aria-label="Recursos do desafio">
+            <div>
+              <Trophy size={20} />
+              <span>Ranking ao vivo</span>
+            </div>
+            <div>
+              <Clock size={20} />
+              <span>Quiz com tempo</span>
+            </div>
+            <div>
+              <Medal size={20} />
+              <span>Simulado liberado</span>
+            </div>
+          </div>
+        </div>
+
+        <form className="studentCard" onSubmit={submit}>
+          <div className="studentCardHeader">
+            <Sparkles size={22} />
+            <div>
+              <strong>Comece agora</strong>
+              <span>Seu placar individual</span>
+            </div>
+          </div>
+          <label>
+            <span>Nome do aluno</span>
+            <input
+              value={name}
+              onChange={(event) => {
+                setName(event.target.value);
+                setError("");
+              }}
+              placeholder="Ex.: Ana Silva"
+              autoFocus
+              required
+            />
+          </label>
+          {error && <small className="formError">{error}</small>}
+          <button className="primaryButton" type="submit">
+            <Trophy size={18} />
+            Entrar no desafio
+          </button>
+          <div className="studentMiniBoard">
+            <div><strong>+10</strong><span>por acerto</span></div>
+            <div><strong>7</strong><span>materias</span></div>
+            <div><strong>Livre</strong><span>simulados</span></div>
+          </div>
+        </form>
+      </section>
     </main>
   );
 }
