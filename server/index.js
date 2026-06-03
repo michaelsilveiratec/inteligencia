@@ -59,6 +59,14 @@ app.post("/api/simulation/attempts", asyncRoute(async (req, res) => {
   res.status(201).json(await store.createSimulationAttempt(req.body));
 }));
 
+app.get("/api/write-and-score", asyncRoute(async (req, res) => {
+  res.json(await store.getWriteAndScore(req.query.studentName));
+}));
+
+app.post("/api/write-and-score/answers", asyncRoute(async (req, res) => {
+  res.status(201).json(await store.createWriteAnswer(req.body));
+}));
+
 app.get("/api/history", asyncRoute(async (_req, res) => {
   res.json(await store.getHistory(_req.query.studentName));
 }));
@@ -130,6 +138,14 @@ if (process.env.VERCEL) {
 
   app.post("/simulation/attempts", asyncRoute(async (req, res) => {
     res.status(201).json(await store.createSimulationAttempt(req.body));
+  }));
+
+  app.get("/write-and-score", asyncRoute(async (req, res) => {
+    res.json(await store.getWriteAndScore(req.query.studentName));
+  }));
+
+  app.post("/write-and-score/answers", asyncRoute(async (req, res) => {
+    res.status(201).json(await store.createWriteAnswer(req.body));
   }));
 
   app.get("/history", asyncRoute(async (req, res) => {

@@ -54,6 +54,7 @@ const iconMap = {
 const navItems = [
   { id: "home", label: "Inicio", icon: Home },
   { id: "simulation", label: "Simulado", icon: Trophy },
+  { id: "write", label: "Escreva", icon: Edit3 },
   { id: "history", label: "Historico", icon: ListChecks },
   { id: "ranking", label: "Ranking", icon: BarChart3 },
   { id: "profile", label: "Perfil", icon: UserRound },
@@ -79,6 +80,7 @@ function App() {
   const [ranking, setRanking] = useState([]);
   const [profile, setProfile] = useState(null);
   const [simulationStatus, setSimulationStatus] = useState(null);
+  const [writeData, setWriteData] = useState(null);
   const [quiz, setQuiz] = useState(null);
   const [quizMode, setQuizMode] = useState("subject");
   const [questionIndex, setQuestionIndex] = useState(0);
@@ -112,18 +114,20 @@ function App() {
     try {
       await apiPost("/api/students", { name: studentName });
       const studentQuery = `studentName=${encodeURIComponent(studentName)}`;
-      const [subjectsData, historyData, rankingData, profileData, simulationData] = await Promise.all([
+      const [subjectsData, historyData, rankingData, profileData, simulationData, writeAndScoreData] = await Promise.all([
         apiGet("/api/subjects"),
         apiGet(`/api/history?${studentQuery}`),
         apiGet("/api/ranking"),
         apiGet(`/api/profile?${studentQuery}`),
-        apiGet(`/api/simulation/status?${studentQuery}`)
+        apiGet(`/api/simulation/status?${studentQuery}`),
+        apiGet(`/api/write-and-score?${studentQuery}`)
       ]);
       setSubjects(subjectsData);
       setHistory(historyData);
       setRanking(rankingData);
       setProfile(profileData);
       setSimulationStatus(simulationData);
+      setWriteData(writeAndScoreData);
     } catch (error) {
       showNotice(error.message || "Falha ao carregar dados.");
     } finally {
@@ -169,6 +173,20 @@ function App() {
       setActive("quiz");
     } catch (error) {
       showNotice(error.message || "Nao foi possivel abrir o simulado.");
+    }
+  }
+
+  async function submitWriteAnswer(questionId, answer) {
+    try {
+      const data = await apiPost("/api/write-and-score/answers", { studentName, questionId, answer });
+      setWriteData(data.status);
+      showNotice(data.completedAll
+        ? "Todas as perguntas foram respondidas. O ciclo foi zerado para recomecar."
+        : `Resposta registrada. +${data.points} pontos.`);
+      await refreshAll();
+    } catch (error) {
+      showNotice(error.message || "Nao foi possivel registrar a resposta.");
+      throw error;
     }
   }
 
@@ -224,6 +242,7 @@ function App() {
     setStudentName("");
     setHistory([]);
     setProfile(null);
+    setWriteData(null);
     setQuiz(null);
     setResult(null);
     setActive("home");
@@ -267,6 +286,12 @@ function App() {
             status={simulationStatus}
             onStart={startSimulation}
             onRefresh={refreshAll}
+          />
+        )}
+        {active === "write" && (
+          <WriteAndScoreScreen
+            data={writeData}
+            onSubmitAnswer={submitWriteAnswer}
           />
         )}
         {active === "quiz" && quiz && currentQuestion && (
@@ -714,6 +739,121 @@ function SimulationScreen({ status, onStart, onRefresh }) {
       {!hasQuestions && (
         <div className="emptyState">Importe um JSON de simulado na aba Cadastrar para liberar questoes nesta prova.</div>
       )}
+    </section>
+  );
+}
+
+function WriteAndScoreScreen({ data, onSubmitAnswer }) {
+  const [selectedId, setSelectedId] = useState("");
+  const [answer, setAnswer] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const questions = data?.questions || [];
+  const stats = data?.stats || {};
+  const unanswered = questions.filter((question) => !question.answered);
+  const selectedQuestion = unanswered.find((question) => question.id === selectedId) || unanswered[0] || null;
+
+  useEffect(() => {
+    if (selectedQuestion && selectedQuestion.id !== selectedId) {
+      setSelectedId(selectedQuestion.id);
+      setAnswer("");
+    }
+  }, [selectedQuestion, selectedId]);
+
+  async function submit(event) {
+    event.preventDefault();
+    if (!selectedQuestion || answer.trim().length < 3) return;
+    setSubmitting(true);
+    try {
+      await onSubmitAnswer(selectedQuestion.id, answer);
+      setAnswer("");
+      setSelectedId("");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <section className="panelScreen">
+      <HeaderBlock
+        title="Escreva e Acerte"
+        subtitle="Escolha uma pergunta, escreva sua resposta e some pontos praticando com as perguntas do sistema."
+      />
+
+      <div className="writeHero">
+        <div>
+          <span className="eyebrow">Como funciona</span>
+          <h2>Cada resposta escrita vale 10 pontos.</h2>
+          <p>Depois de responder corretamente uma pergunta, ela fica bloqueada neste ciclo. Quando todas forem respondidas, o sistema zera o ciclo automaticamente para recomecar.</p>
+        </div>
+        <div className="writeBadge">
+          <Edit3 size={26} />
+          <strong>{stats.remaining || 0}</strong>
+          <span>faltando</span>
+        </div>
+      </div>
+
+      <div className="metricGrid">
+        <Metric label="Perguntas" value={stats.total || 0} />
+        <Metric label="Respondidas" value={stats.answered || 0} />
+        <Metric label="Ciclo" value={stats.cycle || 1} />
+        <Metric label="Pontos do ciclo" value={stats.points || 0} />
+      </div>
+
+      <div className="writeLayout">
+        <section className="writeQuestionList" aria-label="Perguntas para responder">
+          {questions.map((question, index) => (
+            <button
+              className={[
+                "writeQuestionItem",
+                question.id === selectedQuestion?.id ? "active" : "",
+                question.answered ? "done" : ""
+              ].filter(Boolean).join(" ")}
+              type="button"
+              key={question.id}
+              onClick={() => {
+                setSelectedId(question.id);
+                setAnswer("");
+              }}
+              disabled={question.answered}
+            >
+              <b>{index + 1}</b>
+              <span>{question.subject}</span>
+              <strong>{question.statement}</strong>
+              <small>{question.answered ? "Respondida" : "Disponivel"}</small>
+            </button>
+          ))}
+          {!questions.length && <div className="emptyState">Ainda nao existem perguntas cadastradas para escrever.</div>}
+        </section>
+
+        <form className="writeAnswerPanel" onSubmit={submit}>
+          {selectedQuestion ? (
+            <>
+              <span className="eyebrow">{selectedQuestion.subject}</span>
+              <h2>{selectedQuestion.statement}</h2>
+              <label>
+                <span>Sua resposta</span>
+                <textarea
+                  rows={9}
+                  value={answer}
+                  onChange={(event) => setAnswer(event.target.value)}
+                  placeholder="Escreva com suas palavras..."
+                  disabled={submitting}
+                />
+              </label>
+              <button className="primaryButton wide" type="submit" disabled={submitting || answer.trim().length < 3}>
+                <CheckCircle2 size={18} />
+                {submitting ? "Enviando..." : "Enviar resposta"}
+              </button>
+            </>
+          ) : (
+            <div className="writeCompleted">
+              <CheckCircle2 size={38} />
+              <h2>Todas respondidas neste ciclo.</h2>
+              <p>O sistema ja liberou um novo ciclo automaticamente. Atualize ou continue respondendo quando as perguntas aparecerem novamente.</p>
+            </div>
+          )}
+        </form>
+      </div>
     </section>
   );
 }

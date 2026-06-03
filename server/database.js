@@ -3,6 +3,8 @@ import path from "node:path";
 
 const studentId = 1;
 const simulationUnlockSubjectCount = 7;
+const writeAnswerPoints = 10;
+const optionalBackupTables = new Set(["escreva_respostas"]);
 const backupTables = [
   "professores",
   "materias",
@@ -14,7 +16,8 @@ const backupTables = [
   "simulado_questoes",
   "simulado_alternativas",
   "simulado_tentativas",
-  "simulado_respostas"
+  "simulado_respostas",
+  "escreva_respostas"
 ];
 const backupColumns = {
   professores: ["id", "nome", "email", "criado_em"],
@@ -27,7 +30,8 @@ const backupColumns = {
   simulado_questoes: ["id", "enunciado", "dificuldade", "ativo", "criado_em"],
   simulado_alternativas: ["id", "questao_id", "texto", "correta", "ordem"],
   simulado_tentativas: ["id", "usuario_id", "total_questoes", "acertos", "pontuacao", "duracao_segundos", "criado_em"],
-  simulado_respostas: ["id", "tentativa_id", "questao_id", "alternativa_id", "correta"]
+  simulado_respostas: ["id", "tentativa_id", "questao_id", "alternativa_id", "correta"],
+  escreva_respostas: ["id", "usuario_id", "fonte", "fonte_id", "ciclo", "resposta", "pontos", "criado_em"]
 };
 
 export async function createDataStore(options = {}) {
@@ -357,6 +361,115 @@ class SqliteStore {
     };
   }
 
+  getWriteQuestionRows() {
+    return this.db.prepare(`
+      SELECT 'materia' as fonte, q.id as fonte_id, q.enunciado, q.dificuldade,
+             m.nome as materia, p.nome as professor
+      FROM questoes q
+      JOIN materias m ON m.id = q.materia_id
+      JOIN professores p ON p.id = m.professor_id
+      WHERE q.ativo = 1 AND m.ativo = 1
+      UNION ALL
+      SELECT 'simulado' as fonte, sq.id as fonte_id, sq.enunciado, sq.dificuldade,
+             'Simulado' as materia, 'Competicao' as professor
+      FROM simulado_questoes sq
+      WHERE sq.ativo = 1
+      ORDER BY fonte, fonte_id
+    `).all();
+  }
+
+  getWriteCycleState(userId, totalQuestions) {
+    const cycle = this.db.prepare(`
+      SELECT COALESCE(MAX(ciclo), 1) as cycle
+      FROM escreva_respostas
+      WHERE usuario_id = ?
+    `).get(userId).cycle;
+    const answered = this.db.prepare(`
+      SELECT COUNT(DISTINCT fonte || ':' || fonte_id) as total
+      FROM escreva_respostas
+      WHERE usuario_id = ? AND ciclo = ?
+    `).get(userId, cycle).total;
+
+    if (totalQuestions > 0 && answered >= totalQuestions) {
+      return { cycle: cycle + 1, answered: 0 };
+    }
+    return { cycle, answered };
+  }
+
+  async getWriteAndScore(studentName) {
+    const student = await this.getOrCreateStudent(studentName);
+    const questions = this.getWriteQuestionRows();
+    const state = this.getWriteCycleState(student.id, questions.length);
+    const answeredRows = this.db.prepare(`
+      SELECT fonte, fonte_id, resposta, criado_em
+      FROM escreva_respostas
+      WHERE usuario_id = ? AND ciclo = ?
+    `).all(student.id, state.cycle);
+    const answeredByQuestion = new Map(answeredRows.map((row) => [`${row.fonte}:${row.fonte_id}`, row]));
+
+    return {
+      student,
+      stats: {
+        total: questions.length,
+        answered: answeredRows.length,
+        remaining: Math.max(0, questions.length - answeredRows.length),
+        cycle: state.cycle,
+        points: answeredRows.length * writeAnswerPoints
+      },
+      questions: questions.map((question) => {
+        const id = `${question.fonte}:${question.fonte_id}`;
+        const answer = answeredByQuestion.get(id);
+        return {
+          id,
+          source: question.fonte,
+          sourceId: question.fonte_id,
+          subject: question.materia,
+          professor: question.professor,
+          statement: question.enunciado,
+          difficulty: question.dificuldade,
+          answered: Boolean(answer),
+          answeredAt: answer?.criado_em || null
+        };
+      })
+    };
+  }
+
+  async createWriteAnswer(body) {
+    const student = await this.getOrCreateStudent(body.studentName);
+    const answer = normalizeWriteAnswer(body.answer || body.resposta);
+    const questionRef = parseWriteQuestionId(body.questionId);
+    const questions = this.getWriteQuestionRows();
+    const question = questions.find((item) => item.fonte === questionRef.source && Number(item.fonte_id) === questionRef.sourceId);
+    if (!question) throw httpError("Pergunta nao encontrada.", 404);
+
+    const state = this.getWriteCycleState(student.id, questions.length);
+    const alreadyAnswered = this.db.prepare(`
+      SELECT id FROM escreva_respostas
+      WHERE usuario_id = ? AND fonte = ? AND fonte_id = ? AND ciclo = ?
+    `).get(student.id, questionRef.source, questionRef.sourceId, state.cycle);
+    if (alreadyAnswered) throw httpError("Essa pergunta ja foi respondida neste ciclo.");
+
+    const answerId = this.db.prepare(`
+      INSERT INTO escreva_respostas (usuario_id, fonte, fonte_id, ciclo, resposta, pontos)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(student.id, questionRef.source, questionRef.sourceId, state.cycle, answer, writeAnswerPoints).lastInsertRowid;
+
+    const answered = this.db.prepare(`
+      SELECT COUNT(DISTINCT fonte || ':' || fonte_id) as total
+      FROM escreva_respostas
+      WHERE usuario_id = ? AND ciclo = ?
+    `).get(student.id, state.cycle).total;
+    const completedAll = questions.length > 0 && answered >= questions.length;
+
+    return {
+      ok: true,
+      answerId,
+      points: writeAnswerPoints,
+      completedAll,
+      status: await this.getWriteAndScore(student.nome)
+    };
+  }
+
   async getHistory(studentName) {
     const student = await this.getOrCreateStudent(studentName);
     return this.db.prepare(`
@@ -371,22 +484,29 @@ class SqliteStore {
              'Simulado' as materia, 'Competicao' as professor, 'simulado' as tipo
       FROM simulado_tentativas st
       WHERE st.usuario_id = ?
+      UNION ALL
+      SELECT er.id, 1 as total_questoes, 1 as acertos, 100 as pontuacao, 0 as duracao_segundos, er.criado_em,
+             'Escreva e Acerte' as materia, er.fonte as professor, 'escreva' as tipo
+      FROM escreva_respostas er
+      WHERE er.usuario_id = ?
       ORDER BY criado_em DESC
-    `).all(student.id, student.id);
+    `).all(student.id, student.id, student.id);
   }
 
   async getRanking() {
     const rows = this.db.prepare(`
       WITH all_attempts AS (
-        SELECT usuario_id, acertos, total_questoes, pontuacao FROM tentativas
+        SELECT usuario_id, acertos, total_questoes, pontuacao, ((acertos * 10) + pontuacao) as pontos_base FROM tentativas
         UNION ALL
-        SELECT usuario_id, acertos, total_questoes, pontuacao FROM simulado_tentativas
+        SELECT usuario_id, acertos, total_questoes, pontuacao, ((acertos * 10) + pontuacao) as pontos_base FROM simulado_tentativas
+        UNION ALL
+        SELECT usuario_id, 1 as acertos, 1 as total_questoes, 100 as pontuacao, pontos as pontos_base FROM escreva_respostas
       )
       SELECT u.id, u.nome as aluno,
              COUNT(a.usuario_id) as tentativas,
              COALESCE(SUM(a.acertos), 0) as acertos,
              COALESCE(SUM(a.total_questoes), 0) as total_questoes,
-             COALESCE(SUM((a.acertos * 10) + a.pontuacao), 0) as pontos,
+             COALESCE(SUM(a.pontos_base), 0) as pontos,
              COALESCE(MAX(a.pontuacao), 0) as melhor_pontuacao,
              COALESCE(ROUND(AVG(a.pontuacao)), 0) as media
       FROM usuarios u
@@ -401,18 +521,20 @@ class SqliteStore {
     const user = await this.getOrCreateStudent(studentName);
     const stats = this.db.prepare(`
       WITH all_attempts AS (
-        SELECT acertos, total_questoes, pontuacao, duracao_segundos FROM tentativas WHERE usuario_id = ?
+        SELECT acertos, total_questoes, pontuacao, duracao_segundos, ((acertos * 10) + pontuacao) as pontos_base FROM tentativas WHERE usuario_id = ?
         UNION ALL
-        SELECT acertos, total_questoes, pontuacao, duracao_segundos FROM simulado_tentativas WHERE usuario_id = ?
+        SELECT acertos, total_questoes, pontuacao, duracao_segundos, ((acertos * 10) + pontuacao) as pontos_base FROM simulado_tentativas WHERE usuario_id = ?
+        UNION ALL
+        SELECT 1 as acertos, 1 as total_questoes, 100 as pontuacao, 0 as duracao_segundos, pontos as pontos_base FROM escreva_respostas WHERE usuario_id = ?
       )
       SELECT COUNT(*) as attempts,
              COALESCE(SUM(acertos), 0) as correct,
              COALESCE(SUM(total_questoes - acertos), 0) as wrong,
              COALESCE(ROUND(AVG(pontuacao)), 0) as average,
-             COALESCE(SUM((acertos * 10) + pontuacao), 0) as points,
+             COALESCE(SUM(pontos_base), 0) as points,
              COALESCE(SUM(duracao_segundos), 0) as durationSeconds
       FROM all_attempts
-    `).get(user.id, user.id);
+    `).get(user.id, user.id, user.id);
     return { user, stats };
   }
 
@@ -977,6 +1099,129 @@ class PostgresStore {
     }
   }
 
+  async getWriteQuestionRows(client = this.pool) {
+    const { rows } = await client.query(`
+      SELECT 'materia' as fonte, q.id as fonte_id, q.enunciado, q.dificuldade,
+             m.nome as materia, p.nome as professor
+      FROM questoes q
+      JOIN materias m ON m.id = q.materia_id
+      JOIN professores p ON p.id = m.professor_id
+      WHERE q.ativo = 1 AND m.ativo = 1
+      UNION ALL
+      SELECT 'simulado' as fonte, sq.id as fonte_id, sq.enunciado, sq.dificuldade,
+             'Simulado' as materia, 'Competicao' as professor
+      FROM simulado_questoes sq
+      WHERE sq.ativo = 1
+      ORDER BY fonte, fonte_id
+    `);
+    return rows;
+  }
+
+  async getWriteCycleState(userId, totalQuestions, client = this.pool) {
+    const { rows: cycleRows } = await client.query(`
+      SELECT COALESCE(MAX(ciclo), 1)::int as cycle
+      FROM escreva_respostas
+      WHERE usuario_id = $1
+    `, [userId]);
+    const cycle = cycleRows[0].cycle;
+    const { rows: answeredRows } = await client.query(`
+      SELECT COUNT(DISTINCT fonte || ':' || fonte_id::text)::int as total
+      FROM escreva_respostas
+      WHERE usuario_id = $1 AND ciclo = $2
+    `, [userId, cycle]);
+    const answered = answeredRows[0].total;
+
+    if (totalQuestions > 0 && answered >= totalQuestions) {
+      return { cycle: cycle + 1, answered: 0 };
+    }
+    return { cycle, answered };
+  }
+
+  async getWriteAndScore(studentName) {
+    const student = await this.getOrCreateStudent(studentName);
+    const questions = await this.getWriteQuestionRows();
+    const state = await this.getWriteCycleState(student.id, questions.length);
+    const { rows: answeredRows } = await this.pool.query(`
+      SELECT fonte, fonte_id, resposta, criado_em
+      FROM escreva_respostas
+      WHERE usuario_id = $1 AND ciclo = $2
+    `, [student.id, state.cycle]);
+    const answeredByQuestion = new Map(answeredRows.map((row) => [`${row.fonte}:${row.fonte_id}`, row]));
+
+    return {
+      student,
+      stats: {
+        total: questions.length,
+        answered: answeredRows.length,
+        remaining: Math.max(0, questions.length - answeredRows.length),
+        cycle: state.cycle,
+        points: answeredRows.length * writeAnswerPoints
+      },
+      questions: questions.map((question) => {
+        const id = `${question.fonte}:${question.fonte_id}`;
+        const answer = answeredByQuestion.get(id);
+        return {
+          id,
+          source: question.fonte,
+          sourceId: question.fonte_id,
+          subject: question.materia,
+          professor: question.professor,
+          statement: question.enunciado,
+          difficulty: question.dificuldade,
+          answered: Boolean(answer),
+          answeredAt: answer?.criado_em || null
+        };
+      })
+    };
+  }
+
+  async createWriteAnswer(body) {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const student = await this.getOrCreateStudent(body.studentName, client);
+      const answer = normalizeWriteAnswer(body.answer || body.resposta);
+      const questionRef = parseWriteQuestionId(body.questionId);
+      const questions = await this.getWriteQuestionRows(client);
+      const question = questions.find((item) => item.fonte === questionRef.source && Number(item.fonte_id) === questionRef.sourceId);
+      if (!question) throw httpError("Pergunta nao encontrada.", 404);
+
+      const state = await this.getWriteCycleState(student.id, questions.length, client);
+      const { rows: existingRows } = await client.query(`
+        SELECT id FROM escreva_respostas
+        WHERE usuario_id = $1 AND fonte = $2 AND fonte_id = $3 AND ciclo = $4
+      `, [student.id, questionRef.source, questionRef.sourceId, state.cycle]);
+      if (existingRows[0]) throw httpError("Essa pergunta ja foi respondida neste ciclo.");
+
+      const { rows: answerRows } = await client.query(`
+        INSERT INTO escreva_respostas (usuario_id, fonte, fonte_id, ciclo, resposta, pontos)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        RETURNING id
+      `, [student.id, questionRef.source, questionRef.sourceId, state.cycle, answer, writeAnswerPoints]);
+
+      const { rows: answeredRows } = await client.query(`
+        SELECT COUNT(DISTINCT fonte || ':' || fonte_id::text)::int as total
+        FROM escreva_respostas
+        WHERE usuario_id = $1 AND ciclo = $2
+      `, [student.id, state.cycle]);
+      const completedAll = questions.length > 0 && answeredRows[0].total >= questions.length;
+
+      await client.query("COMMIT");
+      return {
+        ok: true,
+        answerId: answerRows[0].id,
+        points: writeAnswerPoints,
+        completedAll,
+        status: await this.getWriteAndScore(student.nome)
+      };
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async getHistory(studentName) {
     const student = await this.getOrCreateStudent(studentName);
     const { rows } = await this.pool.query(`
@@ -991,6 +1236,11 @@ class PostgresStore {
              'Simulado' as materia, 'Competicao' as professor, 'simulado' as tipo
       FROM simulado_tentativas st
       WHERE st.usuario_id = $1
+      UNION ALL
+      SELECT er.id, 1 as total_questoes, 1 as acertos, 100 as pontuacao, 0 as duracao_segundos, er.criado_em,
+             'Escreva e Acerte' as materia, er.fonte as professor, 'escreva' as tipo
+      FROM escreva_respostas er
+      WHERE er.usuario_id = $1
       ORDER BY criado_em DESC
     `, [student.id]);
     return rows;
@@ -999,15 +1249,17 @@ class PostgresStore {
   async getRanking() {
     const { rows } = await this.pool.query(`
       WITH all_attempts AS (
-        SELECT usuario_id, acertos, total_questoes, pontuacao FROM tentativas
+        SELECT usuario_id, acertos, total_questoes, pontuacao, ((acertos * 10) + pontuacao) as pontos_base FROM tentativas
         UNION ALL
-        SELECT usuario_id, acertos, total_questoes, pontuacao FROM simulado_tentativas
+        SELECT usuario_id, acertos, total_questoes, pontuacao, ((acertos * 10) + pontuacao) as pontos_base FROM simulado_tentativas
+        UNION ALL
+        SELECT usuario_id, 1 as acertos, 1 as total_questoes, 100 as pontuacao, pontos as pontos_base FROM escreva_respostas
       )
       SELECT u.id, u.nome as aluno,
              COUNT(a.usuario_id)::int as tentativas,
              COALESCE(SUM(a.acertos), 0)::int as acertos,
              COALESCE(SUM(a.total_questoes), 0)::int as total_questoes,
-             COALESCE(SUM((a.acertos * 10) + a.pontuacao), 0)::int as pontos,
+             COALESCE(SUM(a.pontos_base), 0)::int as pontos,
              COALESCE(MAX(a.pontuacao), 0)::int as melhor_pontuacao,
              COALESCE(ROUND(AVG(a.pontuacao)), 0)::int as media
       FROM usuarios u
@@ -1022,15 +1274,17 @@ class PostgresStore {
     const user = await this.getOrCreateStudent(studentName);
     const { rows: statRows } = await this.pool.query(`
       WITH all_attempts AS (
-        SELECT acertos, total_questoes, pontuacao, duracao_segundos FROM tentativas WHERE usuario_id = $1
+        SELECT acertos, total_questoes, pontuacao, duracao_segundos, ((acertos * 10) + pontuacao) as pontos_base FROM tentativas WHERE usuario_id = $1
         UNION ALL
-        SELECT acertos, total_questoes, pontuacao, duracao_segundos FROM simulado_tentativas WHERE usuario_id = $1
+        SELECT acertos, total_questoes, pontuacao, duracao_segundos, ((acertos * 10) + pontuacao) as pontos_base FROM simulado_tentativas WHERE usuario_id = $1
+        UNION ALL
+        SELECT 1 as acertos, 1 as total_questoes, 100 as pontuacao, 0 as duracao_segundos, pontos as pontos_base FROM escreva_respostas WHERE usuario_id = $1
       )
       SELECT COUNT(*)::int as attempts,
              COALESCE(SUM(acertos), 0)::int as correct,
              COALESCE(SUM(total_questoes - acertos), 0)::int as wrong,
              COALESCE(ROUND(AVG(pontuacao)), 0)::int as average,
-             COALESCE(SUM((acertos * 10) + pontuacao), 0)::int as points,
+             COALESCE(SUM(pontos_base), 0)::int as points,
              COALESCE(SUM(duracao_segundos), 0)::int as "durationSeconds"
       FROM all_attempts
     `, [user.id]);
@@ -1356,6 +1610,7 @@ function validateBackup(backup) {
   }
   for (const table of backupTables) {
     if (backup.tables[table] === undefined && table.startsWith("simulado_")) backup.tables[table] = [];
+    if (backup.tables[table] === undefined && optionalBackupTables.has(table)) backup.tables[table] = [];
     if (!Array.isArray(backup.tables[table])) throw httpError(`Backup sem tabela ${table}.`);
   }
 }
@@ -1390,6 +1645,21 @@ function cleanDuration(value) {
   const number = Math.round(Number(value));
   if (!Number.isFinite(number) || number < 0) return 0;
   return Math.min(number, 24 * 60 * 60);
+}
+
+function parseWriteQuestionId(value) {
+  const [source, rawId] = String(value || "").split(":");
+  const sourceId = Number(rawId);
+  if (!["materia", "simulado"].includes(source) || !Number.isInteger(sourceId) || sourceId <= 0) {
+    throw httpError("Pergunta invalida.");
+  }
+  return { source, sourceId };
+}
+
+function normalizeWriteAnswer(value) {
+  const answer = cleanText(value).replace(/\s+/g, " ");
+  if (answer.length < 3) throw httpError("Escreva uma resposta antes de enviar.");
+  return answer.slice(0, 4000);
 }
 
 function normalizeStudentName(name) {
@@ -1541,6 +1811,19 @@ const sqliteSchema = `
     FOREIGN KEY(questao_id) REFERENCES simulado_questoes(id) ON DELETE CASCADE,
     FOREIGN KEY(alternativa_id) REFERENCES simulado_alternativas(id) ON DELETE SET NULL
   );
+
+  CREATE TABLE IF NOT EXISTS escreva_respostas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    usuario_id INTEGER NOT NULL,
+    fonte TEXT NOT NULL,
+    fonte_id INTEGER NOT NULL,
+    ciclo INTEGER NOT NULL DEFAULT 1,
+    resposta TEXT NOT NULL,
+    pontos INTEGER NOT NULL DEFAULT 10,
+    criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(usuario_id, fonte, fonte_id, ciclo),
+    FOREIGN KEY(usuario_id) REFERENCES usuarios(id) ON DELETE CASCADE
+  );
 `;
 
 const postgresSchema = `
@@ -1638,6 +1921,18 @@ const postgresSchema = `
     questao_id INTEGER NOT NULL REFERENCES simulado_questoes(id) ON DELETE CASCADE,
     alternativa_id INTEGER REFERENCES simulado_alternativas(id) ON DELETE SET NULL,
     correta INTEGER NOT NULL DEFAULT 0
+  );
+
+  CREATE TABLE IF NOT EXISTS escreva_respostas (
+    id SERIAL PRIMARY KEY,
+    usuario_id INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
+    fonte TEXT NOT NULL,
+    fonte_id INTEGER NOT NULL,
+    ciclo INTEGER NOT NULL DEFAULT 1,
+    resposta TEXT NOT NULL,
+    pontos INTEGER NOT NULL DEFAULT 10,
+    criado_em TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(usuario_id, fonte, fonte_id, ciclo)
   );
 `;
 
