@@ -13,6 +13,7 @@
     "backup:export": "node scripts/migrate-online.js export",
     "backup:restore": "node scripts/migrate-online.js restore",
     "backup:migrate": "node scripts/migrate-online.js migrate",
+    "db:migrate:neon": "node scripts/migrate-to-postgres.js --yes",
     "questions:import": "node scripts/migrate-online.js import-questions"
   },
   "dependencies": {
@@ -22,9 +23,9 @@
     "cors": "^2.8.5",
     "express": "^4.21.2",
     "lucide-react": "^0.468.0",
+    "pg": "^8.21.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "vite": "^6.0.3"
-  },
-  "devDependencies": {}
+  }
 }

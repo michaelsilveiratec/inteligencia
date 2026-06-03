@@ -656,7 +656,7 @@ function AdminScreen({ subjects, onSaved }) {
     setRestoring(true);
     try {
       const text = await file.text();
-      const backup = JSON.parse(text);
+      const backup = parseJsonFile(text);
       if (backup?.tables) {
         const confirmed = window.confirm("Restaurar este backup vai substituir os dados atuais. Continuar?");
         if (!confirmed) return;
@@ -768,39 +768,51 @@ function Metric({ label, value }) {
 }
 
 async function apiGet(path) {
-  const response = await fetch(path);
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.error || "Erro de API.");
-  return data;
+  return apiRequest(path);
 }
 
 async function apiPost(path, payload) {
-  const response = await fetch(path, {
+  return apiRequest(path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload)
   });
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.error || "Erro de API.");
-  return data;
 }
 
 async function apiPatch(path, payload) {
-  const response = await fetch(path, {
+  return apiRequest(path, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload)
   });
-  const data = await response.json();
+}
+
+async function apiDelete(path) {
+  return apiRequest(path, { method: "DELETE" });
+}
+
+async function apiRequest(path, options) {
+  const response = await fetch(path, options);
+  const text = await response.text();
+  const data = parseApiJson(text, path);
   if (!response.ok) throw new Error(data.error || "Erro de API.");
   return data;
 }
 
-async function apiDelete(path) {
-  const response = await fetch(path, { method: "DELETE" });
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.error || "Erro de API.");
-  return data;
+function parseApiJson(text, path) {
+  try {
+    return text ? JSON.parse(text) : {};
+  } catch (_error) {
+    throw new Error(`A API nao retornou JSON em ${path}. Verifique se o backend esta online e se /api/health abre corretamente.`);
+  }
+}
+
+function parseJsonFile(text) {
+  try {
+    return JSON.parse(text);
+  } catch (_error) {
+    throw new Error("Arquivo invalido. Importe um JSON exportado pelo Estuda+ ou um arquivo de perguntas em formato JSON.");
+  }
 }
 
 function formatDate(value) {

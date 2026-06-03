@@ -1,6 +1,6 @@
 # Estuda+
 
-Plataforma de quiz por materia/professor com dados persistidos em SQLite.
+Plataforma de quiz por materia/professor com dados persistidos em SQLite local ou Postgres online.
 
 ## Rodar localmente
 
@@ -15,7 +15,7 @@ API: `http://127.0.0.1:3333`
 
 ## Persistencia dos dados
 
-Por padrao, o banco fica em:
+Por padrao, o banco local fica em:
 
 ```text
 server/data/estuda-plus.db
@@ -30,6 +30,28 @@ Tudo que for cadastrado fica salvo nesse arquivo:
 - tentativas
 - respostas
 - historico/ranking
+
+## Banco online com Postgres
+
+Para usar um banco online, crie um Postgres em um provedor como Supabase, Neon, Railway ou Render e configure a variavel:
+
+```text
+DATABASE_URL=postgresql://usuario:senha@host:5432/banco
+```
+
+Quando `DATABASE_URL` existe, o servidor cria as tabelas automaticamente e tudo que for cadastrado/importado passa a ser salvo no Postgres online. Quando `DATABASE_URL` nao existe, o app continua usando o SQLite local.
+
+Em bancos online que exigem SSL, o app ja tenta conectar com SSL automaticamente. Para um Postgres local sem SSL, use:
+
+```text
+PGSSLMODE=disable
+```
+
+ou:
+
+```text
+DATABASE_SSL=false
+```
 
 ## Backup e restauracao
 
@@ -94,7 +116,10 @@ Tambem pode marcar a alternativa correta assim:
 
 ## Deploy
 
-Para deploy, use uma plataforma com armazenamento persistente para o SQLite, ou configure um banco externo futuramente.
+Para deploy, existem dois caminhos:
+
+1. Configurar `DATABASE_URL` com um Postgres online. Esse e o caminho recomendado para nao perder dados entre deploys.
+2. Usar SQLite com disco persistente na plataforma de hospedagem.
 
 Variaveis suportadas:
 
@@ -145,3 +170,25 @@ npm run questions:import -- --to https://seu-app-online.com --file minhas-questo
 ```
 
 Observacao: `backup:restore` e `backup:migrate` substituem os dados do destino pelo conteudo do backup. Use sempre depois de conferir a URL online.
+
+### Migrar do SQLite local para Postgres online
+
+1. Rode o app local sem `DATABASE_URL`:
+
+```bash
+npm run dev
+```
+
+2. Exporte o banco local:
+
+```bash
+npm run backup:export -- --from http://127.0.0.1:3333 --out backups/local.json
+```
+
+3. Suba o app online com `DATABASE_URL` configurada.
+
+4. Restaure o backup no app online:
+
+```bash
+npm run backup:restore -- --to https://seu-app-online.com --file backups/local.json --yes
+```
