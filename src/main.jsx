@@ -794,16 +794,16 @@ async function apiDelete(path) {
 async function apiRequest(path, options) {
   const response = await fetch(path, options);
   const text = await response.text();
-  const data = parseApiJson(text, path);
+  const data = parseApiJson(text, path, response);
   if (!response.ok) throw new Error(data.error || "Erro de API.");
   return data;
 }
 
-function parseApiJson(text, path) {
+function parseApiJson(text, path, response) {
   try {
     return text ? JSON.parse(text) : {};
   } catch (_error) {
-    throw new Error(`A API nao retornou JSON em ${path}. Verifique se o backend esta online e se /api/health abre corretamente.`);
+    throw new Error(`A API nao retornou JSON em ${path} (HTTP ${response.status}). Abra /api/health no deploy e confira se DATABASE_URL esta configurada na Vercel.`);
   }
 }
 

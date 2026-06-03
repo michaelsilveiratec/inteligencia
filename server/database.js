@@ -1,6 +1,5 @@
 import fs from "node:fs";
 import path from "node:path";
-import Database from "better-sqlite3";
 
 const studentId = 1;
 const backupTables = ["professores", "materias", "questoes", "alternativas", "usuarios", "tentativas", "respostas"];
@@ -22,8 +21,9 @@ export async function createDataStore(options = {}) {
   return createSqliteStore(options);
 }
 
-export function createSqliteStore(options = {}) {
-  return new SqliteStore(options);
+export async function createSqliteStore(options = {}) {
+  const { default: Database } = await import("better-sqlite3");
+  return new SqliteStore(Database, options);
 }
 
 export async function createPostgresStore(options = {}) {
@@ -32,7 +32,7 @@ export async function createPostgresStore(options = {}) {
 }
 
 class SqliteStore {
-  constructor(options = {}) {
+  constructor(Database, options = {}) {
     const dataDir = options.dataDir
       ? path.resolve(options.dataDir)
       : process.env.DATA_DIR

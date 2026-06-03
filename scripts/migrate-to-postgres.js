@@ -26,7 +26,7 @@ async function main() {
     throw new Error("DATABASE_URL nao encontrada. Confirme se ela esta no arquivo .env.");
   }
 
-  const sqlite = createSqliteStore();
+  const sqlite = await createSqliteStore();
   const postgres = await createPostgresStore({ databaseUrl });
 
   try {
