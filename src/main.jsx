@@ -250,7 +250,7 @@ function App() {
 
   return (
     <div className="appShell">
-      <Sidebar active={active} setActive={setActive} onExitQuiz={exitQuiz} />
+      <Sidebar active={active} setActive={setActive} onExitQuiz={changeStudent} />
       <main className="contentShell">
         {notice && <div className="notice">{notice}</div>}
         {active === "home" && (
