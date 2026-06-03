@@ -10,8 +10,12 @@ import {
   ChevronRight,
   Circle,
   Clock,
+  Code2,
+  Cloud,
+  Database,
   Download,
   Edit3,
+  FileCheck2,
   FlaskConical,
   GraduationCap,
   Home,
@@ -19,13 +23,19 @@ import {
   Leaf,
   ListChecks,
   LogOut,
+  Mail,
+  MapPin,
   Medal,
   Plus,
   RotateCcw,
+  Rocket,
   Save,
+  ShieldCheck,
   Sparkles,
+  Target,
   Trophy,
   Upload,
+  Users,
   UserRound,
   X
 } from "lucide-react";
@@ -361,6 +371,35 @@ function MobileNav({ active, setActive }) {
 function StudentGate({ onSubmit }) {
   const [name, setName] = useState("");
   const [error, setError] = useState("");
+  const stats = [
+    { icon: FileCheck2, value: "2.450+", label: "Questoes disponiveis", tone: "purple" },
+    { icon: BookOpen, value: "7", label: "Materias disponiveis", tone: "green" },
+    { icon: Users, value: "128", label: "Alunos ativos", tone: "blue" },
+    { icon: Target, value: "45", label: "Simulados disponiveis", tone: "orange" }
+  ];
+  const subjects = [
+    { icon: RotateCcw, name: "Scrum", count: "120 questoes", color: "#f97316" },
+    { icon: Code2, name: "Engenharia de Software", count: "350 questoes", color: "#2563eb" },
+    { icon: Atom, name: "React", count: "180 questoes", color: "#06b6d4" },
+    { icon: Rocket, name: "FastAPI", count: "160 questoes", color: "#0f766e" },
+    { icon: Landmark, name: "UML", count: "140 questoes", color: "#7c3aed" },
+    { icon: Database, name: "Banco de Dados", count: "200 questoes", color: "#2563eb" },
+    { icon: Cloud, name: "AWS", count: "150 questoes", color: "#111827" },
+    { icon: Calculator, name: "Java", count: "210 questoes", color: "#dc2626" }
+  ];
+  const ranking = [
+    ["Michael Ramos", "Engenharia de Software", "980 pts"],
+    ["Ana Souza", "React", "920 pts"],
+    ["Carlos Silva", "Scrum", "900 pts"],
+    ["Joao Santos", "Banco de Dados", "850 pts"],
+    ["Maria Lima", "UML", "810 pts"]
+  ];
+  const steps = [
+    { icon: UserRound, title: "Informe seu nome", text: "Entre na plataforma em segundos." },
+    { icon: ListChecks, title: "Escolha uma materia", text: "Selecione o tema que quer estudar." },
+    { icon: Target, title: "Responda quizzes", text: "Acumule pontos a cada acerto." },
+    { icon: Trophy, title: "Suba no ranking", text: "Compita e veja sua evolucao." }
+  ];
 
   function submit(event) {
     event.preventDefault();
@@ -374,63 +413,215 @@ function StudentGate({ onSubmit }) {
 
   return (
     <main className="studentGate">
-      <section className="studentHero" aria-label="Entrada do aluno">
-        <div className="studentHeroCopy">
+      <section className="studentLanding">
+        <nav className="landingNav" aria-label="Navegacao da landing page">
           <div className="studentBrand">
-            <div className="brandMark"><GraduationCap size={26} /></div>
-            <strong>Estuda+</strong>
+            <GraduationCap size={30} />
+            <strong>Estuda<span>+</span></strong>
           </div>
-          <span className="eyebrow">Desafio da turma</span>
-          <h1>Entre, responda quizzes e suba no ranking.</h1>
-          <p>Cada acerto vira ponto, cada simulado conta para sua evolucao, e seu nome fica salvo para acompanhar o progresso.</p>
-          <div className="studentHighlights" aria-label="Recursos do desafio">
-            <div>
-              <Trophy size={20} />
-              <span>Ranking ao vivo</span>
-            </div>
-            <div>
-              <Clock size={20} />
-              <span>Quiz com tempo</span>
-            </div>
-            <div>
-              <Medal size={20} />
-              <span>Simulado liberado</span>
-            </div>
+          <div className="landingMenu">
+            <a href="#como-funciona">Como funciona</a>
+            <a href="#materias">Materias</a>
+            <a href="#ranking">Ranking</a>
+            <a href="#simulados">Simulados</a>
           </div>
-        </div>
+          <a className="landingLogin" href="#entrada">
+            <LogOut size={17} />
+            Entrar
+          </a>
+        </nav>
 
-        <form className="studentCard" onSubmit={submit}>
-          <div className="studentCardHeader">
-            <Sparkles size={22} />
-            <div>
-              <strong>Comece agora</strong>
-              <span>Seu placar individual</span>
+        <section className="landingHero" aria-label="Entrada do aluno">
+          <div className="studentHeroCopy">
+            <span className="landingBadge"><Trophy size={18} /> Desafio da Turma</span>
+            <h1>Transforme seus estudos em conquistas.</h1>
+            <p>Responda quizzes, acumule pontos, acompanhe sua evolucao e dispute o topo do ranking.</p>
+            <div className="studentHighlights" aria-label="Beneficios rapidos">
+              <div><CheckCircle2 size={20} /><span>Quizzes inteligentes</span></div>
+              <div><CheckCircle2 size={20} /><span>Ranking ao vivo</span></div>
+              <div><CheckCircle2 size={20} /><span>Simulados completos</span></div>
+            </div>
+            <div className="studentSocial">
+              <div className="avatarStack">
+                <span>MR</span><span>AS</span><span>CS</span><b>+123</b>
+              </div>
+              <p>Mais de <strong>128 alunos</strong> ja estao participando!</p>
             </div>
           </div>
-          <label>
-            <span>Nome do aluno</span>
-            <input
-              value={name}
-              onChange={(event) => {
-                setName(event.target.value);
-                setError("");
-              }}
-              placeholder="Ex.: Ana Silva"
-              autoFocus
-              required
-            />
-          </label>
-          {error && <small className="formError">{error}</small>}
-          <button className="primaryButton" type="submit">
-            <Trophy size={18} />
-            Entrar no desafio
-          </button>
-          <div className="studentMiniBoard">
-            <div><strong>+10</strong><span>por acerto</span></div>
-            <div><strong>7</strong><span>materias</span></div>
-            <div><strong>Livre</strong><span>simulados</span></div>
+
+          <div className="trophyScene" aria-hidden="true">
+            <div className="chartLine"><span /><span /><span /><span /></div>
+            <div className="trophyGlow" />
+            <div className="trophyCup">🏆</div>
+            <div className="podium"><strong>1</strong></div>
           </div>
-        </form>
+
+          <form className="studentCard" id="entrada" onSubmit={submit}>
+            <div className="studentCardIcon"><Rocket size={30} /></div>
+            <div>
+              <h2>Comece sua jornada</h2>
+              <p>E rapido, gratuito e feito para voce aprender cada vez mais.</p>
+            </div>
+            <label>
+              <span>Nome do aluno</span>
+              <input
+                value={name}
+                onChange={(event) => {
+                  setName(event.target.value);
+                  setError("");
+                }}
+                placeholder="Ex.: Ana Silva"
+                autoFocus
+                required
+              />
+            </label>
+            {error && <small className="formError">{error}</small>}
+            <button className="primaryButton studentStartButton" type="submit">
+              <Rocket size={18} />
+              Iniciar Desafio
+            </button>
+            <ul className="studentChecks">
+              <li><CheckCircle2 size={17} /> Ranking em tempo real</li>
+              <li><CheckCircle2 size={17} /> Acompanhe seu desempenho</li>
+              <li><CheckCircle2 size={17} /> Simulados por materia</li>
+              <li><ShieldCheck size={17} /> Certificados de conclusao</li>
+            </ul>
+            <small className="freeNote">100% gratuito. Sem cartao de credito.</small>
+          </form>
+        </section>
+
+        <section className="landingStats" aria-label="Estatisticas">
+          {stats.map(({ icon: Icon, value, label, tone }) => (
+            <article className={`landingStat ${tone}`} key={label}>
+              <Icon size={28} />
+              <div>
+                <strong>{value}</strong>
+                <span>{label}</span>
+              </div>
+            </article>
+          ))}
+        </section>
+
+        <section className="landingGrid">
+          <div className="landingPanel subjectShowcase" id="materias">
+            <HeaderBlock title="Escolha seu desafio" subtitle="Selecione uma materia e comece a praticar agora mesmo." />
+            <div className="landingSubjects">
+              {subjects.map(({ icon: Icon, name: subjectName, count, color }) => (
+                <article className="landingSubject" key={subjectName}>
+                  <Icon size={34} style={{ color }} />
+                  <strong>{subjectName}</strong>
+                  <span>{count}</span>
+                </article>
+              ))}
+            </div>
+            <a className="outlineCta" href="#entrada">Ver todas as materias</a>
+          </div>
+
+          <div className="rankingPanel" id="ranking">
+            <header>
+              <h2><Trophy size={24} /> Ranking da Semana</h2>
+              <a href="#entrada">Ver ranking completo</a>
+            </header>
+            <div className="landingRanking">
+              {ranking.map(([student, topic, points], index) => (
+                <article key={student}>
+                  <b>{index + 1}</b>
+                  <div className="rankAvatar">{student.slice(0, 1)}</div>
+                  <div>
+                    <strong>{student}</strong>
+                    <span>{topic}</span>
+                  </div>
+                  <strong>{points}</strong>
+                </article>
+              ))}
+            </div>
+            <div className="rankingMotivation">
+              <Target size={46} />
+              <div>
+                <strong>Continue estudando e suba no ranking!</strong>
+                <span>Seu esforco hoje e sua conquista amanha.</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="landingGrid lower">
+          <div className="landingPanel teachersPanel">
+            <HeaderBlock title="Nossos Professores" subtitle="Aprenda com quem entende do assunto." />
+            <div className="teacherCards">
+              <article>
+                <div className="teacherPhoto mariana">M</div>
+                <div>
+                  <strong>Prof. Mariana</strong>
+                  <span>Engenharia de Software</span>
+                  <p>Scrum, UML, qualidade de software e metodologias ageis.</p>
+                  <a href="#entrada">Ver questoes</a>
+                </div>
+              </article>
+              <article>
+                <div className="teacherPhoto giovanni">G</div>
+                <div>
+                  <strong>Prof. Giovanni</strong>
+                  <span>Desenvolvimento Web</span>
+                  <p>React, FastAPI, arquitetura e desenvolvimento web.</p>
+                  <a href="#entrada">Ver questoes</a>
+                </div>
+              </article>
+            </div>
+          </div>
+
+          <div className="landingPanel stepsPanel" id="como-funciona">
+            <HeaderBlock title="Como funciona" subtitle="Simples, pratico e eficiente." />
+            <div className="landingSteps">
+              {steps.map(({ icon: Icon, title, text }, index) => (
+                <article key={title}>
+                  <span>{index + 1}</span>
+                  <Icon size={30} />
+                  <strong>{title}</strong>
+                  <p>{text}</p>
+                </article>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        <section className="finalCta" id="simulados">
+          <div>
+            <h2>Pronto para o desafio?</h2>
+            <p>Milhares de questoes, rankings ao vivo e muito aprendizado te esperam.</p>
+          </div>
+          <a href="#entrada"><Rocket size={18} /> Comecar agora e gratis!</a>
+        </section>
+
+        <footer className="landingFooter">
+          <div>
+            <div className="studentBrand">
+              <GraduationCap size={28} />
+              <strong>Estuda<span>+</span></strong>
+            </div>
+            <p>Estudar nunca foi tao divertido e desafiador.</p>
+          </div>
+          <nav>
+            <strong>Plataforma</strong>
+            <a href="#materias">Materias</a>
+            <a href="#simulados">Simulados</a>
+            <a href="#ranking">Ranking</a>
+            <a href="#como-funciona">Como funciona</a>
+          </nav>
+          <nav>
+            <strong>Suporte</strong>
+            <a href="#entrada">Duvidas frequentes</a>
+            <a href="#entrada">Contato</a>
+            <a href="#entrada">Politica de Privacidade</a>
+            <a href="#entrada">Termos de Uso</a>
+          </nav>
+          <address>
+            <strong>Contato</strong>
+            <span><Mail size={15} /> contato@estudamais.com.br</span>
+            <span><MapPin size={15} /> Sao Paulo - Brasil</span>
+            <small>v1.0.0</small>
+          </address>
+        </footer>
       </section>
     </main>
   );
