@@ -111,6 +111,53 @@ button:disabled {
   padding: 30px clamp(18px, 3vw, 42px) 44px;
 }
 
+.studentGate {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background:
+    linear-gradient(135deg, rgba(22, 119, 255, 0.12), transparent 38%),
+    #f4f7fb;
+}
+
+.studentCard {
+  width: min(440px, 100%);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: var(--shadow);
+  padding: 24px;
+  display: grid;
+  gap: 14px;
+}
+
+.studentCard .brandMark {
+  color: #fff;
+  background: var(--blue);
+}
+
+.studentCard h1,
+.studentCard p {
+  margin: 0;
+}
+
+.studentCard p,
+.studentCard label {
+  color: var(--muted);
+}
+
+.studentCard label {
+  display: grid;
+  gap: 7px;
+  font-weight: 800;
+}
+
+.formError {
+  color: #b42318;
+  font-weight: 800;
+}
+
 .notice {
   position: fixed;
   top: 18px;
@@ -370,6 +417,20 @@ button:disabled {
 .quizHeader span,
 .quizHeader small {
   color: var(--muted);
+}
+
+.quizClock {
+  justify-items: end;
+  color: var(--ink);
+  font-weight: 900;
+}
+
+.quizClock span {
+  color: var(--ink);
+}
+
+.quizClock svg {
+  color: var(--blue);
 }
 
 .ghostButton,
@@ -633,6 +694,10 @@ button:disabled {
   gap: 14px;
 }
 
+.profileSwitch {
+  margin-left: auto;
+}
+
 .avatar {
   width: 68px;
   height: 68px;
@@ -861,7 +926,7 @@ textarea {
     border-top: 1px solid var(--line);
     background: #fff;
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(5, 1fr);
   }
 
   .mobileNav button {
@@ -903,6 +968,19 @@ textarea {
   .resultActions {
     display: grid;
     grid-template-columns: 1fr;
+  }
+
+  .quizClock {
+    justify-items: start;
+  }
+
+  .profileCard {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .profileSwitch {
+    margin-left: 0;
   }
 
   .welcomeBadge {

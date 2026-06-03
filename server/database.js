@@ -9,7 +9,7 @@ const backupColumns = {
   questoes: ["id", "materia_id", "enunciado", "dificuldade", "ativo", "criado_em"],
   alternativas: ["id", "questao_id", "texto", "correta", "ordem"],
   usuarios: ["id", "nome", "email", "criado_em"],
-  tentativas: ["id", "usuario_id", "materia_id", "total_questoes", "acertos", "pontuacao", "criado_em"],
+  tentativas: ["id", "usuario_id", "materia_id", "total_questoes", "acertos", "pontuacao", "duracao_segundos", "criado_em"],
   respostas: ["id", "tentativa_id", "questao_id", "alternativa_id", "correta"]
 };
 
@@ -52,6 +52,7 @@ class SqliteStore {
 
   async init() {
     this.db.exec(sqliteSchema);
+    this.migrate();
     this.seedDatabase();
   }
 
@@ -152,6 +153,8 @@ class SqliteStore {
   async createAttempt(subjectId, body) {
     const subject = this.getSubjectSync(subjectId);
     if (!subject) throw httpError("Materia nao encontrada.", 404);
+    const student = await this.getOrCreateStudent(body.studentName);
+    const durationSeconds = cleanDuration(body.durationSeconds);
 
     const answers = Array.isArray(body.answers) ? body.answers : [];
     const questions = this.db.prepare(`
@@ -195,9 +198,9 @@ class SqliteStore {
 
     const score = Math.round((correctCount / questions.length) * 100);
     const attemptId = this.db.prepare(`
-      INSERT INTO tentativas (usuario_id, materia_id, total_questoes, acertos, pontuacao)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(studentId, subject.id, questions.length, correctCount, score).lastInsertRowid;
+      INSERT INTO tentativas (usuario_id, materia_id, total_questoes, acertos, pontuacao, duracao_segundos)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(student.id, subject.id, questions.length, correctCount, score, durationSeconds).lastInsertRowid;
 
     const insertAnswer = this.db.prepare(`
       INSERT INTO respostas (tentativa_id, questao_id, alternativa_id, correta)
@@ -210,51 +213,57 @@ class SqliteStore {
     return {
       attemptId,
       subject,
+      student,
       score,
       correctCount,
       total: questions.length,
+      durationSeconds,
       details
     };
   }
 
-  async getHistory() {
+  async getHistory(studentName) {
+    const student = await this.getOrCreateStudent(studentName);
     return this.db.prepare(`
-      SELECT t.id, t.total_questoes, t.acertos, t.pontuacao, t.criado_em,
+      SELECT t.id, t.total_questoes, t.acertos, t.pontuacao, t.duracao_segundos, t.criado_em,
              m.nome as materia, p.nome as professor
       FROM tentativas t
       JOIN materias m ON m.id = t.materia_id
       JOIN professores p ON p.id = m.professor_id
       WHERE t.usuario_id = ?
       ORDER BY t.criado_em DESC
-    `).all(studentId);
+    `).all(student.id);
   }
 
   async getRanking() {
     const rows = this.db.prepare(`
-      SELECT m.nome as materia, p.nome as professor,
+      SELECT u.id, u.nome as aluno,
              COUNT(t.id) as tentativas,
-             MAX(t.pontuacao) as melhor_pontuacao,
-             ROUND(AVG(t.pontuacao)) as media
-      FROM materias m
-      JOIN professores p ON p.id = m.professor_id
-      LEFT JOIN tentativas t ON t.materia_id = m.id AND t.usuario_id = ?
-      WHERE m.ativo = 1
-      GROUP BY m.id
-      ORDER BY melhor_pontuacao DESC NULLS LAST, media DESC NULLS LAST, m.nome
-    `).all(studentId);
+             COALESCE(SUM(t.acertos), 0) as acertos,
+             COALESCE(SUM(t.total_questoes), 0) as total_questoes,
+             COALESCE(SUM((t.acertos * 10) + t.pontuacao), 0) as pontos,
+             COALESCE(MAX(t.pontuacao), 0) as melhor_pontuacao,
+             COALESCE(ROUND(AVG(t.pontuacao)), 0) as media
+      FROM usuarios u
+      LEFT JOIN tentativas t ON t.usuario_id = u.id
+      GROUP BY u.id
+      ORDER BY pontos DESC, acertos DESC, media DESC, u.nome
+    `).all();
     return normalizeRanking(rows);
   }
 
-  async getProfile() {
-    const user = this.db.prepare("SELECT * FROM usuarios WHERE id = ?").get(studentId);
+  async getProfile(studentName) {
+    const user = await this.getOrCreateStudent(studentName);
     const stats = this.db.prepare(`
       SELECT COUNT(*) as attempts,
              COALESCE(SUM(acertos), 0) as correct,
              COALESCE(SUM(total_questoes - acertos), 0) as wrong,
-             COALESCE(ROUND(AVG(pontuacao)), 0) as average
+             COALESCE(ROUND(AVG(pontuacao)), 0) as average,
+             COALESCE(SUM((acertos * 10) + pontuacao), 0) as points,
+             COALESCE(SUM(duracao_segundos), 0) as durationSeconds
       FROM tentativas
       WHERE usuario_id = ?
-    `).get(studentId);
+    `).get(user.id);
     return { user, stats };
   }
 
@@ -404,6 +413,22 @@ class SqliteStore {
     `).run(professorId, name, cleanText(icon) || "BookOpen", cleanText(color) || "#1677ff").lastInsertRowid;
   }
 
+  async getOrCreateStudent(name) {
+    const studentName = normalizeStudentName(name);
+    const existing = this.db.prepare("SELECT * FROM usuarios WHERE lower(nome) = lower(?)").get(studentName);
+    if (existing) return existing;
+    const id = this.db.prepare("INSERT INTO usuarios (nome, email) VALUES (?, ?)").run(studentName, "").lastInsertRowid;
+    return this.db.prepare("SELECT * FROM usuarios WHERE id = ?").get(id);
+  }
+
+  migrate() {
+    try {
+      this.db.prepare("ALTER TABLE tentativas ADD COLUMN duracao_segundos INTEGER NOT NULL DEFAULT 0").run();
+    } catch (error) {
+      if (!String(error.message || "").includes("duplicate column")) throw error;
+    }
+  }
+
   seedDatabase() {
     const userCount = this.db.prepare("SELECT COUNT(*) as total FROM usuarios").get().total;
     if (!userCount) {
@@ -441,6 +466,7 @@ class PostgresStore {
 
   async init() {
     await this.pool.query(postgresSchema);
+    await this.migrate();
     await this.seedDatabase();
   }
 
@@ -539,6 +565,8 @@ class PostgresStore {
       await client.query("BEGIN");
       const subject = await this.getSubject(subjectId, client);
       if (!subject) throw httpError("Materia nao encontrada.", 404);
+      const student = await this.getOrCreateStudent(body.studentName, client);
+      const durationSeconds = cleanDuration(body.durationSeconds);
 
       const answers = Array.isArray(body.answers) ? body.answers : [];
       const { rows: questions } = await client.query(`
@@ -585,10 +613,10 @@ class PostgresStore {
 
       const score = Math.round((correctCount / questions.length) * 100);
       const { rows: attemptRows } = await client.query(`
-        INSERT INTO tentativas (usuario_id, materia_id, total_questoes, acertos, pontuacao)
-        VALUES ($1, $2, $3, $4, $5)
+        INSERT INTO tentativas (usuario_id, materia_id, total_questoes, acertos, pontuacao, duracao_segundos)
+        VALUES ($1, $2, $3, $4, $5, $6)
         RETURNING id
-      `, [studentId, subject.id, questions.length, correctCount, score]);
+      `, [student.id, subject.id, questions.length, correctCount, score, durationSeconds]);
       const attemptId = attemptRows[0].id;
 
       for (const detail of details) {
@@ -602,9 +630,11 @@ class PostgresStore {
       return {
         attemptId,
         subject,
+        student,
         score,
         correctCount,
         total: questions.length,
+        durationSeconds,
         details
       };
     } catch (error) {
@@ -615,46 +645,50 @@ class PostgresStore {
     }
   }
 
-  async getHistory() {
+  async getHistory(studentName) {
+    const student = await this.getOrCreateStudent(studentName);
     const { rows } = await this.pool.query(`
-      SELECT t.id, t.total_questoes, t.acertos, t.pontuacao, t.criado_em,
+      SELECT t.id, t.total_questoes, t.acertos, t.pontuacao, t.duracao_segundos, t.criado_em,
              m.nome as materia, p.nome as professor
       FROM tentativas t
       JOIN materias m ON m.id = t.materia_id
       JOIN professores p ON p.id = m.professor_id
       WHERE t.usuario_id = $1
       ORDER BY t.criado_em DESC
-    `, [studentId]);
+    `, [student.id]);
     return rows;
   }
 
   async getRanking() {
     const { rows } = await this.pool.query(`
-      SELECT m.nome as materia, p.nome as professor,
+      SELECT u.id, u.nome as aluno,
              COUNT(t.id)::int as tentativas,
-             MAX(t.pontuacao)::int as melhor_pontuacao,
-             ROUND(AVG(t.pontuacao))::int as media
-      FROM materias m
-      JOIN professores p ON p.id = m.professor_id
-      LEFT JOIN tentativas t ON t.materia_id = m.id AND t.usuario_id = $1
-      WHERE m.ativo = 1
-      GROUP BY m.id, p.nome
-      ORDER BY melhor_pontuacao DESC NULLS LAST, media DESC NULLS LAST, m.nome
-    `, [studentId]);
+             COALESCE(SUM(t.acertos), 0)::int as acertos,
+             COALESCE(SUM(t.total_questoes), 0)::int as total_questoes,
+             COALESCE(SUM((t.acertos * 10) + t.pontuacao), 0)::int as pontos,
+             COALESCE(MAX(t.pontuacao), 0)::int as melhor_pontuacao,
+             COALESCE(ROUND(AVG(t.pontuacao)), 0)::int as media
+      FROM usuarios u
+      LEFT JOIN tentativas t ON t.usuario_id = u.id
+      GROUP BY u.id, u.nome
+      ORDER BY pontos DESC, acertos DESC, media DESC, u.nome
+    `);
     return normalizeRanking(rows);
   }
 
-  async getProfile() {
-    const { rows: userRows } = await this.pool.query("SELECT * FROM usuarios WHERE id = $1", [studentId]);
+  async getProfile(studentName) {
+    const user = await this.getOrCreateStudent(studentName);
     const { rows: statRows } = await this.pool.query(`
       SELECT COUNT(*)::int as attempts,
              COALESCE(SUM(acertos), 0)::int as correct,
              COALESCE(SUM(total_questoes - acertos), 0)::int as wrong,
-             COALESCE(ROUND(AVG(pontuacao)), 0)::int as average
+             COALESCE(ROUND(AVG(pontuacao)), 0)::int as average,
+             COALESCE(SUM((acertos * 10) + pontuacao), 0)::int as points,
+             COALESCE(SUM(duracao_segundos), 0)::int as "durationSeconds"
       FROM tentativas
       WHERE usuario_id = $1
-    `, [studentId]);
-    return { user: userRows[0], stats: statRows[0] };
+    `, [user.id]);
+    return { user, stats: statRows[0] };
   }
 
   async getBackup() {
@@ -831,6 +865,22 @@ class PostgresStore {
     return rows[0].id;
   }
 
+  async getOrCreateStudent(name, client = this.pool) {
+    const studentName = normalizeStudentName(name);
+    const { rows: existing } = await client.query("SELECT * FROM usuarios WHERE lower(nome) = lower($1) LIMIT 1", [studentName]);
+    if (existing[0]) return existing[0];
+    const { rows } = await client.query(`
+      INSERT INTO usuarios (nome, email)
+      VALUES ($1, $2)
+      RETURNING *
+    `, [studentName, ""]);
+    return rows[0];
+  }
+
+  async migrate() {
+    await this.pool.query("ALTER TABLE tentativas ADD COLUMN IF NOT EXISTS duracao_segundos INTEGER NOT NULL DEFAULT 0");
+  }
+
   async seedDatabase() {
     const { rows: userRows } = await this.pool.query("SELECT COUNT(*)::int as total FROM usuarios");
     if (!userRows[0].total) {
@@ -924,6 +974,9 @@ function normalizeRanking(rows) {
   return rows.map((row) => ({
     ...row,
     tentativas: Number(row.tentativas || 0),
+    acertos: Number(row.acertos || 0),
+    total_questoes: Number(row.total_questoes || 0),
+    pontos: Number(row.pontos || 0),
     melhor_pontuacao: Number(row.melhor_pontuacao || 0),
     media: Number(row.media || 0)
   }));
@@ -936,6 +989,18 @@ function cleanText(value) {
 function cleanNumber(value) {
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
+}
+
+function cleanDuration(value) {
+  const number = Math.round(Number(value));
+  if (!Number.isFinite(number) || number < 0) return 0;
+  return Math.min(number, 24 * 60 * 60);
+}
+
+function normalizeStudentName(name) {
+  const value = cleanText(name);
+  if (!value) throw httpError("Informe o nome do aluno.");
+  return value.slice(0, 120);
 }
 
 function httpError(message, status = 400) {
@@ -1026,6 +1091,7 @@ const sqliteSchema = `
     total_questoes INTEGER NOT NULL,
     acertos INTEGER NOT NULL,
     pontuacao INTEGER NOT NULL,
+    duracao_segundos INTEGER NOT NULL DEFAULT 0,
     criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(usuario_id) REFERENCES usuarios(id) ON DELETE CASCADE,
     FOREIGN KEY(materia_id) REFERENCES materias(id) ON DELETE CASCADE
@@ -1094,6 +1160,7 @@ const postgresSchema = `
     total_questoes INTEGER NOT NULL,
     acertos INTEGER NOT NULL,
     pontuacao INTEGER NOT NULL,
+    duracao_segundos INTEGER NOT NULL DEFAULT 0,
     criado_em TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
 

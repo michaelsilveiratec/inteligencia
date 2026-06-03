@@ -38,12 +38,16 @@ app.get("/api/subjects/:id/quiz", asyncRoute(async (req, res) => {
   res.json(await store.getQuiz(req.params.id));
 }));
 
+app.post("/api/students", asyncRoute(async (req, res) => {
+  res.status(201).json(await store.getOrCreateStudent(req.body?.name));
+}));
+
 app.post("/api/subjects/:id/attempts", asyncRoute(async (req, res) => {
   res.status(201).json(await store.createAttempt(req.params.id, req.body));
 }));
 
 app.get("/api/history", asyncRoute(async (_req, res) => {
-  res.json(await store.getHistory());
+  res.json(await store.getHistory(_req.query.studentName));
 }));
 
 app.get("/api/ranking", asyncRoute(async (_req, res) => {
@@ -51,7 +55,7 @@ app.get("/api/ranking", asyncRoute(async (_req, res) => {
 }));
 
 app.get("/api/profile", asyncRoute(async (_req, res) => {
-  res.json(await store.getProfile());
+  res.json(await store.getProfile(_req.query.studentName));
 }));
 
 app.get("/api/backup", asyncRoute(async (_req, res) => {
@@ -91,20 +95,24 @@ if (process.env.VERCEL) {
     res.json(await store.getQuiz(req.params.id));
   }));
 
+  app.post("/students", asyncRoute(async (req, res) => {
+    res.status(201).json(await store.getOrCreateStudent(req.body?.name));
+  }));
+
   app.post("/subjects/:id/attempts", asyncRoute(async (req, res) => {
     res.status(201).json(await store.createAttempt(req.params.id, req.body));
   }));
 
-  app.get("/history", asyncRoute(async (_req, res) => {
-    res.json(await store.getHistory());
+  app.get("/history", asyncRoute(async (req, res) => {
+    res.json(await store.getHistory(req.query.studentName));
   }));
 
   app.get("/ranking", asyncRoute(async (_req, res) => {
     res.json(await store.getRanking());
   }));
 
-  app.get("/profile", asyncRoute(async (_req, res) => {
-    res.json(await store.getProfile());
+  app.get("/profile", asyncRoute(async (req, res) => {
+    res.json(await store.getProfile(req.query.studentName));
   }));
 
   app.get("/backup", asyncRoute(async (_req, res) => {

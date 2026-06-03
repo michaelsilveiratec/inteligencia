@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   ChevronRight,
   Circle,
+  Clock,
   Download,
   Edit3,
   FlaskConical,
@@ -61,6 +62,7 @@ const emptyQuestionForm = {
 };
 
 function App() {
+  const [studentName, setStudentName] = useState(loadStoredStudentName);
   const [active, setActive] = useState("home");
   const [subjects, setSubjects] = useState([]);
   const [history, setHistory] = useState([]);
@@ -70,22 +72,39 @@ function App() {
   const [questionIndex, setQuestionIndex] = useState(0);
   const [answers, setAnswers] = useState({});
   const [result, setResult] = useState(null);
+  const [quizStartedAt, setQuizStartedAt] = useState(null);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(true);
   const [editingSubject, setEditingSubject] = useState(null);
 
   useEffect(() => {
-    refreshAll();
-  }, []);
+    if (studentName) {
+      refreshAll();
+    } else {
+      setLoading(false);
+    }
+  }, [studentName]);
+
+  useEffect(() => {
+    if (active !== "quiz" || !quizStartedAt) return undefined;
+    const timer = window.setInterval(() => {
+      setElapsedSeconds(Math.floor((Date.now() - quizStartedAt) / 1000));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [active, quizStartedAt]);
 
   async function refreshAll() {
+    if (!studentName) return;
     setLoading(true);
     try {
+      await apiPost("/api/students", { name: studentName });
+      const studentQuery = `studentName=${encodeURIComponent(studentName)}`;
       const [subjectsData, historyData, rankingData, profileData] = await Promise.all([
         apiGet("/api/subjects"),
-        apiGet("/api/history"),
+        apiGet(`/api/history?${studentQuery}`),
         apiGet("/api/ranking"),
-        apiGet("/api/profile")
+        apiGet(`/api/profile?${studentQuery}`)
       ]);
       setSubjects(subjectsData);
       setHistory(historyData);
@@ -114,6 +133,8 @@ function App() {
       setQuestionIndex(0);
       setAnswers({});
       setResult(null);
+      setElapsedSeconds(0);
+      setQuizStartedAt(Date.now());
       setActive("quiz");
     } catch (error) {
       showNotice(error.message || "Nao foi possivel abrir o quiz.");
@@ -121,6 +142,7 @@ function App() {
   }
 
   function selectAlternative(questionId, alternativeId) {
+    playQuizTone("select");
     setAnswers((current) => ({ ...current, [questionId]: alternativeId }));
   }
 
@@ -128,13 +150,17 @@ function App() {
     if (!quiz) return;
     try {
       const payload = {
+        studentName,
+        durationSeconds: elapsedSeconds,
         answers: quiz.questions.map((question) => ({
           questionId: question.id,
           alternativeId: answers[question.id] || null
         }))
       };
       const data = await apiPost(`/api/subjects/${quiz.subject.id}/attempts`, payload);
+      playQuizTone("finish");
       setResult(data);
+      setQuizStartedAt(null);
       setActive("result");
       await refreshAll();
     } catch (error) {
@@ -147,6 +173,25 @@ function App() {
     setResult(null);
     setAnswers({});
     setQuestionIndex(0);
+    setQuizStartedAt(null);
+    setElapsedSeconds(0);
+    setActive("home");
+  }
+
+  function updateStudent(name) {
+    const clean = name.trim();
+    window.localStorage.setItem("estuda-plus-student-name", clean);
+    setStudentName(clean);
+    setActive("home");
+  }
+
+  function changeStudent() {
+    window.localStorage.removeItem("estuda-plus-student-name");
+    setStudentName("");
+    setHistory([]);
+    setProfile(null);
+    setQuiz(null);
+    setResult(null);
     setActive("home");
   }
 
@@ -177,6 +222,10 @@ function App() {
   const currentQuestion = quiz?.questions?.[questionIndex] || null;
   const answeredCount = quiz?.questions?.filter((question) => answers[question.id]).length || 0;
 
+  if (!studentName) {
+    return <StudentGate onSubmit={updateStudent} />;
+  }
+
   return (
     <div className="appShell">
       <Sidebar active={active} setActive={setActive} onExitQuiz={exitQuiz} />
@@ -204,6 +253,7 @@ function App() {
             onNext={() => setQuestionIndex((index) => Math.min(quiz.questions.length - 1, index + 1))}
             onFinish={finishQuiz}
             onBack={exitQuiz}
+            elapsedSeconds={elapsedSeconds}
           />
         )}
         {active === "result" && result && (
@@ -211,7 +261,7 @@ function App() {
         )}
         {active === "history" && <HistoryScreen history={history} />}
         {active === "ranking" && <RankingScreen ranking={ranking} />}
-        {active === "profile" && <ProfileScreen profile={profile} />}
+        {active === "profile" && <ProfileScreen profile={profile} studentName={studentName} onChangeStudent={changeStudent} />}
         {active === "admin" && (
           <AdminScreen
             subjects={subjects}
@@ -283,6 +333,49 @@ function MobileNav({ active, setActive }) {
         );
       })}
     </nav>
+  );
+}
+
+function StudentGate({ onSubmit }) {
+  const [name, setName] = useState("");
+  const [error, setError] = useState("");
+
+  function submit(event) {
+    event.preventDefault();
+    const clean = name.trim();
+    if (!clean) {
+      setError("Digite seu nome para entrar.");
+      return;
+    }
+    onSubmit(clean);
+  }
+
+  return (
+    <main className="studentGate">
+      <form className="studentCard" onSubmit={submit}>
+        <div className="brandMark"><GraduationCap size={26} /></div>
+        <h1>Entre no ranking da turma</h1>
+        <p>Informe seu nome para salvar seus quizzes, acertos e pontos no placar.</p>
+        <label>
+          <span>Nome do aluno</span>
+          <input
+            value={name}
+            onChange={(event) => {
+              setName(event.target.value);
+              setError("");
+            }}
+            placeholder="Ex.: Ana Silva"
+            autoFocus
+            required
+          />
+        </label>
+        {error && <small className="formError">{error}</small>}
+        <button className="primaryButton" type="submit">
+          <Trophy size={18} />
+          Comecar
+        </button>
+      </form>
+    </main>
   );
 }
 
@@ -424,7 +517,8 @@ function QuizScreen({
   onPrevious,
   onNext,
   onFinish,
-  onBack
+  onBack,
+  elapsedSeconds
 }) {
   const total = quiz.questions.length;
   const progress = Math.round(((questionIndex + 1) / total) * 100);
@@ -442,7 +536,11 @@ function QuizScreen({
           <strong>{quiz.subject.nome}</strong>
           <span>{quiz.subject.professor}</span>
         </div>
-        <small>Questao {questionIndex + 1} de {total}</small>
+        <div className="quizClock">
+          <Clock size={18} />
+          <span>{formatDuration(elapsedSeconds)}</span>
+          <small>Questao {questionIndex + 1} de {total}</small>
+        </div>
       </header>
 
       <div className="progressBar">
@@ -549,7 +647,7 @@ function HistoryScreen({ history }) {
               <span style={{ width: `${attempt.pontuacao}%` }} />
             </div>
             <b>{attempt.pontuacao}%</b>
-            <small>{attempt.acertos}/{attempt.total_questoes} acertos</small>
+            <small>{attempt.acertos}/{attempt.total_questoes} acertos - {formatDuration(attempt.duracao_segundos || 0)}</small>
           </article>
         ))}
         {!history.length && <div className="emptyState">Nenhuma tentativa registrada ainda.</div>}
@@ -561,35 +659,39 @@ function HistoryScreen({ history }) {
 function RankingScreen({ ranking }) {
   return (
     <section className="panelScreen">
-      <HeaderBlock title="Ranking" subtitle="Melhores desempenhos por materia." />
+      <HeaderBlock title="Ranking" subtitle="Competicao da turma por pontos, acertos e participacao." />
       <div className="rankingList">
         {ranking.map((item, index) => (
-          <article className="rankingRow" key={`${item.materia}-${item.professor}`}>
+          <article className="rankingRow" key={item.id || item.aluno}>
             <div className="rankPosition"><Medal size={20} /> {index + 1}</div>
             <div>
-              <strong>{item.materia}</strong>
-              <span>{item.professor}</span>
+              <strong>{item.aluno}</strong>
+              <span>{item.tentativas} quizzes - {item.acertos}/{item.total_questoes} acertos</span>
             </div>
-            <b>{item.melhor_pontuacao}%</b>
-            <small>{item.tentativas} tentativas</small>
+            <b>{item.pontos} pts</b>
+            <small>Media {item.media}%</small>
           </article>
         ))}
+        {!ranking.length && <div className="emptyState">Nenhum aluno pontuou ainda.</div>}
       </div>
     </section>
   );
 }
 
-function ProfileScreen({ profile }) {
+function ProfileScreen({ profile, studentName, onChangeStudent }) {
   const stats = profile?.stats || {};
   return (
     <section className="panelScreen">
       <HeaderBlock title="Perfil" subtitle="Resumo do aluno." />
       <div className="profileCard">
-        <div className="avatar">A</div>
+        <div className="avatar">{(studentName || "A").slice(0, 1).toUpperCase()}</div>
         <div>
           <h2>{profile?.user?.nome || "Aluno"}</h2>
-          <p>{profile?.user?.email || "sem email"}</p>
+          <p>{stats.points || 0} pontos - {formatDuration(stats.durationSeconds || 0)} estudando</p>
         </div>
+        <button className="secondaryButton profileSwitch" type="button" onClick={onChangeStudent}>
+          Trocar aluno
+        </button>
       </div>
       <div className="metricGrid">
         <Metric label="Tentativas" value={stats.attempts || 0} />
@@ -819,9 +921,44 @@ function formatDate(value) {
   return new Date(value).toLocaleDateString("pt-BR");
 }
 
+function formatDuration(totalSeconds) {
+  const safe = Math.max(0, Math.round(Number(totalSeconds) || 0));
+  const minutes = Math.floor(safe / 60);
+  const seconds = safe % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
 function hexToTint(hex) {
   const safe = /^#[0-9a-f]{6}$/i.test(hex || "") ? hex : "#1677ff";
   return `${safe}18`;
+}
+
+function loadStoredStudentName() {
+  return window.localStorage.getItem("estuda-plus-student-name") || "";
+}
+
+function playQuizTone(type) {
+  try {
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContext) return;
+    const context = new AudioContext();
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    const now = context.currentTime;
+    oscillator.type = "sine";
+    oscillator.frequency.setValueAtTime(type === "finish" ? 660 : 420, now);
+    oscillator.frequency.exponentialRampToValueAtTime(type === "finish" ? 880 : 520, now + 0.12);
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(type === "finish" ? 0.18 : 0.1, now + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + (type === "finish" ? 0.26 : 0.14));
+    oscillator.connect(gain);
+    gain.connect(context.destination);
+    oscillator.start(now);
+    oscillator.stop(now + (type === "finish" ? 0.28 : 0.16));
+    oscillator.onended = () => context.close();
+  } catch (_error) {
+    // Sound is a bonus; the quiz should keep working if audio is blocked.
+  }
 }
 
 createRoot(document.getElementById("root")).render(<App />);
